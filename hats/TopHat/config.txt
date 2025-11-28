@@ -1,0 +1,15 @@
+# Top Hat Configuration
+# This file configures the Top Hat accessory
+
+name=Top Hat
+hatImage=tophat.png
+iconImage=
+
+# Position offsets (relative to cat head center/top)
+offsetX=0.0
+offsetY=-10.0
+
+# Size scaling multipliers
+scaleX=1.0
+scaleY=1.0
+

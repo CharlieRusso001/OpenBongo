@@ -1,0 +1,40 @@
+// Windows Resource File for OpenBongo
+// This file embeds the application icon into the executable
+
+#include <windows.h>
+
+// Icon resource - ID 1
+// Note: The icon file must be converted from JPG to ICO format
+// You can use online converters or ImageMagick: magick convert media/icon.jpg -resize 256x256 media/icon.ico
+IDI_ICON1 ICON "icon.ico"
+
+// Version information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0x0L
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "OpenBongo"
+            VALUE "FileDescription", "Bongo Cat Desktop Pet"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "OpenBongo"
+            VALUE "LegalCopyright", ""
+            VALUE "OriginalFilename", "OpenBongo.exe"
+            VALUE "ProductName", "OpenBongo"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
+
