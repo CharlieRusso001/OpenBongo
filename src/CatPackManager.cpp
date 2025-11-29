@@ -80,6 +80,14 @@ std::vector<CatPackConfig> CatPackManager::scanForCatPacks(const std::string& ba
         }
     }
     
+    // Sort packs by weight (descending), then by name (ascending) for stable ordering
+    std::sort(packs.begin(), packs.end(), [](const CatPackConfig& a, const CatPackConfig& b) {
+        if (a.weight != b.weight) {
+            return a.weight > b.weight; // Higher weight first
+        }
+        return a.name < b.name; // Fallback: alphabetical
+    });
+    
     return packs;
 }
 

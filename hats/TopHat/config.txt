@@ -3,7 +3,7 @@
 
 name=Top Hat
 hatImage=tophat.png
-iconImage=
+iconImage=tophat.png
 
 # Position offsets (relative to cat head center/top)
 offsetX=0.0

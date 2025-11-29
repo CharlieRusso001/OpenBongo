@@ -50,14 +50,23 @@ void BongoCat::updateHatPosition() {
     }
     
     // Position hat relative to top of body (head area)
-    sf::Vector2f bodyPos = bodySprite->getPosition();
+    sf::Vector2f bodyPos = bodySprite->getPosition(); // This is now the bottom center position
     sf::Vector2u bodyTexSize = bodyTexture.getSize();
     
-    // Calculate body top (head position)
-    float bodyTopY = bodyPos.y;
+    // Calculate body dimensions
+    float bodyDisplayWidth = size;
+    float bodyDisplayHeight = size;
+    if (bodyTexSize.x > 0 && bodyTexSize.y > 0) {
+        float aspectRatio = static_cast<float>(bodyTexSize.y) / static_cast<float>(bodyTexSize.x);
+        bodyDisplayHeight = size * aspectRatio;
+    }
+    
+    // Calculate body top (head position) from bottom center
+    float bodyTopY = bodyPos.y - bodyDisplayHeight;
+    float bodyLeftX = bodyPos.x - bodyDisplayWidth / 2.0f;
     
     // Position hat at top of body with offsets
-    float hatX = bodyPos.x + (size / 2.0f) + hatConfig.offsetX; // Center on body, then apply offset
+    float hatX = bodyPos.x + hatConfig.offsetX; // Center on body (bodyPos.x is already center), then apply offset
     float hatY = bodyTopY + hatConfig.offsetY;
     
     // Adjust for hat sprite center if needed (hats typically center horizontally)
@@ -151,10 +160,15 @@ bool BongoCat::loadTextures() {
     // Get texture dimensions and scale to match desired size
     sf::Vector2u bodyTexSize = bodyTexture.getSize();
     if (bodyTexSize.x > 0 && bodyTexSize.y > 0) {
+        // Set origin to bottom center so sprite scales from bottom center
+        bodySprite->setOrigin(sf::Vector2f(static_cast<float>(bodyTexSize.x) / 2.0f, static_cast<float>(bodyTexSize.y)));
+        
         float scaleX = size / static_cast<float>(bodyTexSize.x);
         float scaleY = size / static_cast<float>(bodyTexSize.y);
         bodySprite->setScale(sf::Vector2f(scaleX, scaleY));
     }
+    // Position will be set correctly in recalculatePositions() which is called after loadTextures()
+    // Set a temporary position here to avoid issues
     bodySprite->setPosition(sf::Vector2f(position.x + config.bodyOffsetX, position.y + config.bodyOffsetY));
     
     // Set up arm sprites
@@ -218,6 +232,24 @@ void BongoCat::setHat(const HatConfig& hat) {
     loadHatTexture();
 }
 
+void BongoCat::setSize(float newSize) {
+    if (newSize <= 0.0f) return; // Invalid size
+    
+    size = newSize;
+    
+    // Recalculate arm sizes based on new body size
+    armWidth = size * 0.3f * 1.5f;
+    armHeight = size * 0.4f * 1.5f;
+    
+    // Reload textures to update scales
+    bool texturesLoaded = loadTextures();
+    if (texturesLoaded) {
+        recalculatePositions();
+        updateArmPositions();
+        updateHatPosition();
+    }
+}
+
 void BongoCat::recalculatePositions() {
     // Calculate arm positions based on body position, size, and config offsets
     sf::Vector2u bodyTexSize = bodyTexture.getSize();
@@ -252,8 +284,11 @@ void BongoCat::recalculatePositions() {
     rightArmPunchPos = sf::Vector2f(rightArmX, handY + config.rightArmOffsetY - armHeight * config.punchOffsetY);
     
     // Update body sprite position with offset
+    // Since origin is at bottom center, position should be at bottom center of desired location
     if (bodySprite) {
-        bodySprite->setPosition(sf::Vector2f(bodyX, bodyY));
+        float bodyCenterX = bodyX + bodyDisplayWidth / 2.0f;
+        float bodyBottomCenterY = bodyBottomY;
+        bodySprite->setPosition(sf::Vector2f(bodyCenterX, bodyBottomCenterY));
     }
     
     // Update hat position when body position changes

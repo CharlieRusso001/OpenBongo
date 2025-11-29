@@ -7,6 +7,9 @@ handUpImage=handup-devartcat.png
 handDownImage=handdown-devartcat.png
 iconImage=body-devartcat.png
 
+# UI ordering weight (higher appears earlier in UI)
+weight=98
+
 # Body offsets (relative to base position)
 bodyOffsetX=0.0
 bodyOffsetY=0.0

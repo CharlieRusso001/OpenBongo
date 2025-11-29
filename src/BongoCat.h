@@ -19,6 +19,7 @@ public:
     void setWindowHeight(float windowHeight); // Set window height for positioning hands at bottom
     void setConfig(const CatPackConfig& config); // Change cat pack configuration
     void setHat(const HatConfig& hat); // Change hat configuration
+    void setSize(float newSize); // Change cat size
     
 private:
     sf::Vector2f position;

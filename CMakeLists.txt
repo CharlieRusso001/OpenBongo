@@ -10,13 +10,97 @@ if(WIN32)
         src/platform/WindowsKeyboardHook.cpp
         src/platform/WindowsMouseHook.cpp
     )
-    set(PLATFORM_LIBS user32)
+    set(PLATFORM_LIBS user32 ole32 shell32 oleaut32)
 elseif(APPLE)
     set(PLATFORM_SOURCES src/platform/MacKeyboardHook.cpp)
     set(PLATFORM_LIBS "-framework ApplicationServices -framework Carbon")
+elseif(UNIX)
+    # Linux
+    set(PLATFORM_SOURCES "")
+    set(PLATFORM_LIBS "")
 else()
-    message(FATAL_ERROR "Unsupported platform. Only Windows and macOS are supported.")
+    message(FATAL_ERROR "Unsupported platform. Only Windows, macOS, and Linux are supported.")
 endif()
+
+# ============================================================================
+# Crow (C++ HTTP framework - header only)
+# Located at: third_party/crow/
+# License: BSD (free and open source)
+# ============================================================================
+find_path(CROW_INCLUDE_DIR
+    NAMES crow.h
+    PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/crow/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/crow"
+        "C:/vcpkg/installed/x64-windows/include"
+        "/usr/local/include"
+        "/usr/include"
+)
+
+# Try to find Crow via vcpkg or package manager
+find_package(Crow QUIET)
+
+if(Crow_FOUND)
+    message(STATUS "Found Crow via CMake package")
+    set(CROW_FOUND TRUE)
+elseif(CROW_INCLUDE_DIR)
+    message(STATUS "Found Crow headers at: ${CROW_INCLUDE_DIR}")
+    set(CROW_FOUND TRUE)
+    
+    # Crow requires asio (Asio standalone, not Boost.Asio)
+    # Try to find asio via CMake package (vcpkg provides this)
+    find_package(asio QUIET)
+    
+    if(asio_FOUND)
+        message(STATUS "Found asio via CMake package")
+        # asio package will be linked automatically
+    else()
+        # Try to find asio manually
+        find_path(ASIO_INCLUDE_DIR
+            NAMES asio.hpp
+            PATHS
+                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio/include"
+                "C:/vcpkg/installed/x64-windows/include"
+                "/usr/local/include"
+                "/usr/include"
+        )
+        
+        if(ASIO_INCLUDE_DIR)
+            message(STATUS "Found asio headers at: ${ASIO_INCLUDE_DIR}")
+            # Include directory will be set after target is created
+        else()
+            message(WARNING "Asio not found. Crow requires asio (standalone, not Boost)")
+            message(WARNING "Install via vcpkg: vcpkg install asio")
+            message(WARNING "Or download from: https://think-async.com/Asio/")
+        endif()
+    endif()
+else()
+    message(FATAL_ERROR "Crow not found at third_party/crow/include/")
+    message(FATAL_ERROR "Please ensure Crow is located at: third_party/crow/")
+endif()
+
+# ============================================================================
+# webview library (cross-platform C++ library)
+# Located at: third_party/webview/
+# License: MIT (free and open source)
+# ============================================================================
+# Check if webview exists as a CMake subdirectory
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview/CMakeLists.txt")
+    message(STATUS "Found webview at third_party/webview/, adding as subdirectory")
+    # Add webview as a subdirectory (it's a proper CMake library)
+    # Disable building examples, tests, docs, etc.
+    set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview" EXCLUDE_FROM_ALL)
+    set(WEBVIEW_FOUND TRUE)
+    message(STATUS "webview library configured via CMake")
+else()
+    message(FATAL_ERROR "webview not found at third_party/webview/")
+    message(FATAL_ERROR "Please ensure webview is located at: third_party/webview/")
+endif()
+
+# Platform-specific libraries for webview are handled by webview::core target
 
 # Try to find vcpkg and use it for SFML
 if(WIN32)
@@ -108,6 +192,8 @@ set(SOURCES
     src/HatManager.cpp
     src/KeyboardHook.cpp
     src/MouseHook.cpp
+    src/ImageHelper.cpp
+    src/WebViewWindow.cpp
     ${PLATFORM_SOURCES}
 )
 
@@ -130,6 +216,7 @@ set(HEADERS
     src/BongoCat.h
     src/KeyboardHook.h
     src/MouseHook.h
+    src/WebViewWindow.h
     src/platform/WindowsKeyboardHook.h
     src/platform/WindowsMouseHook.h
     src/platform/MacKeyboardHook.h
@@ -168,14 +255,40 @@ target_link_libraries(${PROJECT_NAME}
     SFML::Graphics
 )
 
+# Link webview library (CMake target from subdirectory)
+if(WEBVIEW_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE webview::core)
+    message(STATUS "Linking webview::core")
+endif()
+
+# Link asio if found (required by Crow)
+if(asio_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE asio::asio)
+    message(STATUS "Linking asio for Crow")
+endif()
+
+# Platform-specific libraries
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${PLATFORM_LIBS})
 elseif(APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE ${PLATFORM_LIBS})
+elseif(UNIX)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PLATFORM_LIBS})
+    # WebKitGTK is handled by webview::core target
 endif()
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE src)
+
+# Add Crow include directory if found manually (not via package)
+if(CROW_FOUND AND CROW_INCLUDE_DIR AND NOT Crow_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${CROW_INCLUDE_DIR})
+endif()
+
+# Add asio include directory if found manually (not via package)
+if(ASIO_INCLUDE_DIR AND NOT asio_FOUND)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${ASIO_INCLUDE_DIR})
+endif()
 
 # Copy SFML DLLs and dependencies on Windows
 if(WIN32)
@@ -267,6 +380,24 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/hats"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/hats"
         COMMENT "Copying hats folder to output directory"
+    )
+    
+    # Copy UI folder to executable directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/ui"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/ui"
+        COMMENT "Copying UI folder to output directory"
+    )
+endif()
+
+# Copy UI folder on all platforms (not just Windows)
+if(APPLE OR UNIX)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/ui"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/ui"
+        COMMENT "Copying UI folder to output directory"
     )
 endif()
 

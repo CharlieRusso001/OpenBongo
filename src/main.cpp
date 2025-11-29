@@ -26,6 +26,10 @@
 #include "HatManager.h"
 #include "CounterEncryption.h"
 #include "BongoStats.h"
+#include "WebViewWindow.h"
+#include "ImageHelper.h"
+#include <sstream>
+#include <regex>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -325,7 +329,36 @@ int main() {
     }
     
     // Create Bongo Cat with selected pack configuration
+    // Load saved cat size or use default
     float catSize = 100.0f;
+    std::string catSizeConfigPath = "OpenBongo.catsize";
+    #ifdef _WIN32
+    if (!exeDirPath.empty()) {
+        try {
+            catSizeConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.catsize").string();
+        } catch (...) {
+            catSizeConfigPath = "OpenBongo.catsize";
+        }
+    }
+    #endif
+    
+    // Load saved cat size
+    std::ifstream catSizeFile(catSizeConfigPath);
+    if (catSizeFile.is_open()) {
+        std::string sizeStr;
+        std::getline(catSizeFile, sizeStr);
+        if (!sizeStr.empty()) {
+            try {
+                catSize = std::stof(sizeStr);
+                if (catSize < 50.0f) catSize = 50.0f;
+                if (catSize > 200.0f) catSize = 200.0f;
+            } catch (...) {
+                catSize = 100.0f;
+            }
+        }
+        catSizeFile.close();
+    }
+    
     float catX = (200.0f - catSize) / 2.0f;
     float catY = 20.0f; // Position cat near top
     BongoCat bongoCat(catX, catY, catSize, currentCatPack);
@@ -539,9 +572,150 @@ int main() {
     menuButtonLine3Ptr->setPosition(sf::Vector2f(menuButtonX + (menuButtonSize - lineWidth) / 2.0f, firstLineY + (lineHeight + lineSpacing) * 2));
     menuButtonLine3Ptr->setFillColor(sf::Color(100, 100, 100)); // Dark grey
     
-    // Settings window (initially null, created when menu button is clicked)
-    std::unique_ptr<sf::RenderWindow> settingsWindow;
+    // Settings window using WebViewWindow (Crow + HTML UI)
+    std::unique_ptr<WebViewWindow> settingsWebView;
     bool settingsWindowOpen = false;
+    
+    // Helper function to send JSON message to webview
+    auto sendJSONToWebView = [](WebViewWindow& webView, const std::string& type, const std::string& jsonData) {
+        // Create properly formatted JSON message
+        std::string message = "{\"type\":\"" + type + "\",\"data\":" + jsonData + "}";
+        webView.postMessage(message);
+    };
+    
+    // Helper function to escape JSON string
+    auto escapeJSON = [](const std::string& str) -> std::string {
+        std::string escaped;
+        for (char c : str) {
+            if (c == '\\') escaped += "\\\\";
+            else if (c == '"') escaped += "\\\"";
+            else if (c == '\n') escaped += "\\n";
+            else if (c == '\r') escaped += "\\r";
+            else if (c == '\t') escaped += "\\t";
+            else escaped += c;
+        }
+        return escaped;
+    };
+    
+    // Helper function to convert filesystem path to HTTP URL
+    auto pathToUrl = [](const std::string& fsPath, int port) -> std::string {
+        if (fsPath.empty()) return "";
+        
+        try {
+            std::string pathStr = fsPath;
+            // Normalize path separators first
+            std::replace(pathStr.begin(), pathStr.end(), '\\', '/');
+            
+            // Find catpacks or hats in the path (case-insensitive search)
+            std::string pathLower = pathStr;
+            std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
+            
+            size_t catpacksPos = pathLower.find("catpacks/");
+            size_t hatsPos = pathLower.find("hats/");
+            
+            std::string relativePath;
+            if (catpacksPos != std::string::npos) {
+                // Extract from "catpacks/" onwards
+                relativePath = pathStr.substr(catpacksPos);
+            } else if (hatsPos != std::string::npos) {
+                // Extract from "hats/" onwards
+                relativePath = pathStr.substr(hatsPos);
+            } else {
+                // Try to get relative path from current directory
+                try {
+                    std::filesystem::path fullPath(fsPath);
+                    std::filesystem::path currentDir = std::filesystem::current_path();
+                    std::filesystem::path relative = std::filesystem::relative(fullPath, currentDir);
+                    relativePath = relative.string();
+                    std::replace(relativePath.begin(), relativePath.end(), '\\', '/');
+                } catch (...) {
+                    // Last resort: use just the filename
+                    std::filesystem::path fullPath(fsPath);
+                    relativePath = fullPath.filename().string();
+                }
+            }
+            
+            // Ensure path starts with / for URL
+            if (relativePath[0] != '/') {
+                relativePath = "/" + relativePath;
+            }
+            
+            return "http://localhost:" + std::to_string(port) + relativePath;
+        } catch (...) {
+            // Fallback: just use the filename
+            try {
+                std::filesystem::path fullPath(fsPath);
+                std::string filename = fullPath.filename().string();
+                return "http://localhost:" + std::to_string(port) + "/" + filename;
+            } catch (...) {
+                return "";
+            }
+        }
+    };
+    
+    // Helper function to send cat pack list
+    auto sendCatPackList = [&sendJSONToWebView, &escapeJSON, &pathToUrl](WebViewWindow& webView, const std::vector<CatPackConfig>& packs) {
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < packs.size(); i++) {
+            if (i > 0) ss << ",";
+            std::string iconPath = packs[i].getImagePath(packs[i].iconImage);
+            std::string iconUrl = iconPath.empty() ? "" : pathToUrl(iconPath, 18080);
+            ss << "{\"name\":\"" << escapeJSON(packs[i].name) << "\",\"iconPath\":\"" << escapeJSON(iconUrl) << "\"}";
+        }
+        ss << "]";
+        LOG_INFO("Sending cat pack list: " + ss.str());
+        sendJSONToWebView(webView, "catPackList", ss.str());
+    };
+    
+    // Helper function to send hat list
+    auto sendHatList = [&sendJSONToWebView, &escapeJSON, &pathToUrl](WebViewWindow& webView, const std::vector<HatConfig>& hats) {
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < hats.size(); i++) {
+            if (i > 0) ss << ",";
+            std::string iconPath = hats[i].iconImage.empty() ? "" : hats[i].getImagePath(hats[i].iconImage);
+            std::string iconUrl = iconPath.empty() ? "" : pathToUrl(iconPath, 18080);
+            ss << "{\"name\":\"" << escapeJSON(hats[i].name) << "\",\"iconPath\":\"" << escapeJSON(iconUrl) << "\"}";
+        }
+        ss << "]";
+        LOG_INFO("Sending hat list: " + ss.str());
+        sendJSONToWebView(webView, "hatList", ss.str());
+    };
+    
+    // Helper function to send selected cat pack
+    auto sendSelectedCatPack = [&sendJSONToWebView, &escapeJSON](WebViewWindow& webView, const CatPackConfig& pack) {
+        std::string json = "{\"name\":\"" + escapeJSON(pack.name) + "\"}";
+        LOG_INFO("Sending selected cat pack: " + json);
+        sendJSONToWebView(webView, "selectedCatPack", json);
+    };
+    
+    // Helper function to send selected hat
+    auto sendSelectedHat = [&sendJSONToWebView, &escapeJSON](WebViewWindow& webView, const HatConfig& hat) {
+        std::string json = "{\"name\":\"" + escapeJSON(hat.name) + "\"}";
+        LOG_INFO("Sending selected hat: " + json);
+        sendJSONToWebView(webView, "selectedHat", json);
+    };
+    
+    // Helper function to parse JSON message from webview
+    auto parseMessage = [](const std::string& message) -> std::map<std::string, std::string> {
+        std::map<std::string, std::string> result;
+        // Simple JSON parsing for our use case
+        std::regex typeRegex("\"type\"\\s*:\\s*\"([^\"]+)\"");
+        std::smatch typeMatch;
+        if (std::regex_search(message, typeMatch, typeRegex)) {
+            result["type"] = typeMatch[1].str();
+        }
+        
+        // Extract name from data if present
+        std::regex nameRegex("\"name\"\\s*:\\s*\"([^\"]+)\"");
+        std::smatch nameMatch;
+        if (std::regex_search(message, nameMatch, nameRegex)) {
+            result["name"] = nameMatch[1].str();
+        }
+        
+        return result;
+    };
     
     if (fontLoaded) {
         counterTextPtr = std::make_unique<sf::Text>(font, "0");
@@ -608,37 +782,277 @@ int main() {
                         if (menuButtonPtr && 
                             mousePos.x >= menuButtonX && mousePos.x <= menuButtonX + menuButtonSize &&
                             mousePos.y >= uiY && mousePos.y <= uiY + menuButtonSize) {
-                            // Toggle settings window
-                            if (!settingsWindowOpen) {
-                                // Create settings window (larger to show cat selection)
-                                // Calculate window height based on content (cat packs + hats + spacing)
-                                unsigned int windowHeight = 400;
-                                unsigned int catPackSectionHeight = 80 + static_cast<unsigned int>(availableCatPacks.size() * 60);
-                                unsigned int hatSectionHeight = 80 + static_cast<unsigned int>(availableHats.size() * 60);
-                                windowHeight = std::max(windowHeight, catPackSectionHeight + hatSectionHeight + 20);
-                                
-                                settingsWindow = std::make_unique<sf::RenderWindow>(
-                                    sf::VideoMode(sf::Vector2u(500, windowHeight)), 
-                                    "OpenBongo Settings", 
-                                    sf::Style::Titlebar | sf::Style::Close
-                                );
-                                
-                                #ifdef _WIN32
-                                HWND settingsHwnd = settingsWindow->getNativeHandle();
-                                if (settingsHwnd) {
-                                    SetWindowPos(settingsHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                            // Toggle settings window (WebViewWindow with HTML UI)
+                            if (!settingsWindowOpen || !settingsWebView || !settingsWebView->isWindowValid()) {
+                                // Create WebViewWindow for settings if it doesn't exist
+                                if (!settingsWebView) {
+                                    std::string htmlPath = "ui/index.html";
+                                    #ifdef _WIN32
+                                    if (!exeDirPath.empty()) {
+                                        try {
+                                            htmlPath = (std::filesystem::path(exeDirPath) / "ui" / "index.html").string();
+                                            if (!std::filesystem::exists(htmlPath)) {
+                                                htmlPath = "ui/index.html";
+                                            }
+                                        } catch (...) {
+                                            htmlPath = "ui/index.html";
+                                        }
+                                    }
+                                    #endif
+                                    
+                                    settingsWebView = std::make_unique<WebViewWindow>();
+                                    
+                                    // Set up message handler
+                                    settingsWebView->setMessageHandler([&](const std::string& message) {
+                                    try {
+                                        LOG_INFO("Received message from webview: " + message);
+                                        auto parsed = parseMessage(message);
+                                        std::string type = parsed["type"];
+                                        LOG_INFO("Parsed message type: " + type);
+                                        
+                                        if (type == "getCatPacks") {
+                                            LOG_INFO("Sending cat packs list");
+                                            sendCatPackList(*settingsWebView, availableCatPacks);
+                                        } else if (type == "getHats") {
+                                            LOG_INFO("Sending hats list");
+                                            sendHatList(*settingsWebView, availableHats);
+                                        } else if (type == "getSelectedCatPack") {
+                                            LOG_INFO("Sending selected cat pack");
+                                            sendSelectedCatPack(*settingsWebView, currentCatPack);
+                                        } else if (type == "getSelectedHat") {
+                                            LOG_INFO("Sending selected hat");
+                                            sendSelectedHat(*settingsWebView, currentHat);
+                                        } else if (type == "selectCatPack") {
+                                            std::string packName = parsed["name"];
+                                            CatPackConfig newCatPack = CatPackManager::findCatPackByName(availableCatPacks, packName);
+                                            if (newCatPack.name == packName) {
+                                                selectedCatPackName = packName;
+                                                currentCatPack = newCatPack;
+                                                bongoCat.setConfig(newCatPack);
+                                                
+                                                // Save selection
+                                                std::ofstream catPackOutFile(catPackConfigPath);
+                                                if (catPackOutFile.is_open()) {
+                                                    catPackOutFile << selectedCatPackName;
+                                                    catPackOutFile.close();
+                                                    LOG_INFO("Cat pack selection saved: " + selectedCatPackName);
+                                                }
+                                                
+                                                sendSelectedCatPack(*settingsWebView, currentCatPack);
+                                            }
+                                        } else if (type == "selectHat") {
+                                            std::string hatName = parsed["name"];
+                                            HatConfig newHat = HatManager::findHatByName(availableHats, hatName);
+                                            if (newHat.name == hatName) {
+                                                selectedHatName = hatName;
+                                                currentHat = newHat;
+                                                bongoCat.setHat(newHat);
+                                                
+                                                // Save selection
+                                                std::ofstream hatOutFile(hatConfigPath);
+                                                if (hatOutFile.is_open()) {
+                                                    hatOutFile << selectedHatName;
+                                                    hatOutFile.close();
+                                                    LOG_INFO("Hat selection saved: " + selectedHatName);
+                                                }
+                                                
+                                                sendSelectedHat(*settingsWebView, currentHat);
+                                            }
+                                        } else if (type == "setCatSize") {
+                                            // Extract size from message
+                                            std::regex sizeRegex("\"size\"\\s*:\\s*(\\d+)");
+                                            std::smatch sizeMatch;
+                                            if (std::regex_search(message, sizeMatch, sizeRegex)) {
+                                                try {
+                                                    float newSize = std::stof(sizeMatch[1].str());
+                                                    if (newSize >= 50.0f && newSize <= 200.0f) {
+                                                        // Get current bottom Y position in screen coordinates before changing size
+                                                        float oldBodyBottomY = bongoCat.getBodyBottomY();
+                                                        sf::Vector2i currentWindowPos = window.getPosition();
+                                                        float oldBottomScreenY = currentWindowPos.y + oldBodyBottomY;
+                                                        
+                                                        // Change cat size
+                                                        catSize = newSize;
+                                                        bongoCat.setSize(catSize);
+                                                        
+                                                        // Recalculate cat position to center it horizontally, keep Y at 20.0f
+                                                        float catX = (200.0f - catSize) / 2.0f;
+                                                        bongoCat.setPosition(catX, 20.0f);
+                                                        
+                                                        // Adjust window position to keep bottom center fixed
+                                                        float newBodyBottomY = bongoCat.getBodyBottomY();
+                                                        float bottomYDelta = newBodyBottomY - oldBodyBottomY;
+                                                        
+                                                        #ifdef _WIN32
+                                                        // Check if we should snap to taskbar or preserve position
+                                                        TaskbarInfo taskbar = GetTaskbarInfo();
+                                                        int newWindowY;
+                                                        
+                                                        if (taskbar.isHorizontal && taskbar.isAtBottom && taskbar.height > 0) {
+                                                            // Snap to taskbar: align cat body bottom with taskbar top
+                                                            newWindowY = taskbar.y - static_cast<int>(newBodyBottomY);
+                                                        } else {
+                                                            // Preserve bottom screen position: adjust window Y by the difference
+                                                            newWindowY = currentWindowPos.y - static_cast<int>(bottomYDelta);
+                                                        }
+                                                        
+                                                        window.setPosition(sf::Vector2i(currentWindowPos.x, newWindowY));
+                                                        #else
+                                                        // On non-Windows, preserve bottom screen position
+                                                        int newWindowY = currentWindowPos.y - static_cast<int>(bottomYDelta);
+                                                        window.setPosition(sf::Vector2i(currentWindowPos.x, newWindowY));
+                                                        #endif
+                                                        
+                                                        // Save size
+                                                        std::ofstream catSizeOutFile(catSizeConfigPath);
+                                                        if (catSizeOutFile.is_open()) {
+                                                            catSizeOutFile << catSize;
+                                                            catSizeOutFile.close();
+                                                            LOG_INFO("Cat size saved: " + std::to_string(catSize));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse cat size");
+                                                }
+                                            }
+                                        } else if (type == "setAccentColor") {
+                                            // Extract color from message
+                                            std::regex colorRegex("\"color\"\\s*:\\s*\"([^\"]+)\"");
+                                            std::smatch colorMatch;
+                                            if (std::regex_search(message, colorMatch, colorRegex)) {
+                                                std::string color = colorMatch[1].str();
+                                                LOG_INFO("Accent color changed to: " + color);
+                                                
+                                                // Save accent color to file
+                                                std::string accentColorConfigPath = "OpenBongo.accentcolor";
+                                                #ifdef _WIN32
+                                                if (!exeDirPath.empty()) {
+                                                    try {
+                                                        accentColorConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.accentcolor").string();
+                                                    } catch (...) {
+                                                        accentColorConfigPath = "OpenBongo.accentcolor";
+                                                    }
+                                                }
+                                                #endif
+                                                
+                                                std::ofstream accentColorOutFile(accentColorConfigPath);
+                                                if (accentColorOutFile.is_open()) {
+                                                    accentColorOutFile << color;
+                                                    accentColorOutFile.close();
+                                                    LOG_INFO("Accent color saved: " + color);
+                                                }
+                                            }
+                                        } else if (type == "hideWindow") {
+                                            // Hide the window instead of closing it
+                                            if (settingsWebView && settingsWebView->isWindowValid()) {
+                                                settingsWebView->hideWindow();
+                                                settingsWindowOpen = false;
+                                                LOG_INFO("Settings window hidden");
+                                            }
+                                        } else if (type == "openURL") {
+                                            // Extract URL from message
+                                            std::regex urlRegex("\"url\"\\s*:\\s*\"([^\"]+)\"");
+                                            std::smatch urlMatch;
+                                            if (std::regex_search(message, urlMatch, urlRegex)) {
+                                                std::string url = urlMatch[1].str();
+                                                LOG_INFO("Opening URL in default browser: " + url);
+                                                
+                                                #ifdef _WIN32
+                                                ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                                                #elif __APPLE__
+                                                std::string command = "open \"" + url + "\"";
+                                                system(command.c_str());
+                                                #else
+                                                // Linux
+                                                std::string command = "xdg-open \"" + url + "\"";
+                                                system(command.c_str());
+                                                #endif
+                                            }
+                                        }
+                                    } catch (const std::exception& e) {
+                                        LOG_ERROR("Exception handling webview message: " + std::string(e.what()));
+                                    }
+                                    });
+                                    
+                                    // Initialize webview
+                                    if (!settingsWebView->initialize(nullptr, htmlPath)) {
+                                        LOG_ERROR("Failed to initialize settings WebView window");
+                                        settingsWebView.reset();
+                                        continue;
+                                    }
+                                    
+                                    #ifdef _WIN32
+                                    HWND settingsHwnd = static_cast<HWND>(settingsWebView->getHwnd());
+                                    if (settingsHwnd) {
+                                        // Remove standard close button
+                                        LONG_PTR style = GetWindowLongPtr(settingsHwnd, GWL_STYLE);
+                                        style &= ~WS_SYSMENU; // Remove system menu (which includes close button)
+                                        SetWindowLongPtr(settingsHwnd, GWL_STYLE, style);
+                                        
+                                        SetWindowPos(settingsHwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                                    }
+                                    #endif
+                                    
+                                    // Wait a bit for webview to fully load, then send initial data
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                                    
+                                    // Send initial data
+                                    LOG_INFO("Sending initial data to webview");
+                                    sendCatPackList(*settingsWebView, availableCatPacks);
+                                    sendHatList(*settingsWebView, availableHats);
+                                    sendSelectedCatPack(*settingsWebView, currentCatPack);
+                                    sendSelectedHat(*settingsWebView, currentHat);
+                                    
+                                    // Send initial cat size
+                                    std::string catSizeJson = "{\"size\":" + std::to_string(static_cast<int>(catSize)) + "}";
+                                    sendJSONToWebView(*settingsWebView, "catSize", catSizeJson);
+                                    
+                                    // Load and send initial accent color
+                                    std::string accentColorConfigPath = "OpenBongo.accentcolor";
+                                    #ifdef _WIN32
+                                    if (!exeDirPath.empty()) {
+                                        try {
+                                            accentColorConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.accentcolor").string();
+                                        } catch (...) {
+                                            accentColorConfigPath = "OpenBongo.accentcolor";
+                                        }
+                                    }
+                                    #endif
+                                    
+                                    std::string accentColor = "#4a90e2"; // Default blue
+                                    std::ifstream accentColorFile(accentColorConfigPath);
+                                    if (accentColorFile.is_open()) {
+                                        std::string colorStr;
+                                        std::getline(accentColorFile, colorStr);
+                                        if (!colorStr.empty() && colorStr[0] == '#') {
+                                            accentColor = colorStr;
+                                        }
+                                        accentColorFile.close();
+                                    }
+                                    
+                                    std::string accentColorJson = "{\"color\":\"" + escapeJSON(accentColor) + "\"}";
+                                    sendJSONToWebView(*settingsWebView, "accentColor", accentColorJson);
                                 }
-                                #endif
                                 
+                                // Show window
+                                settingsWebView->showWindow();
                                 settingsWindowOpen = true;
-                                LOG_INFO("Settings window opened");
+                                LOG_INFO("Settings WebView window shown");
                             } else {
-                                // Close settings window
-                                if (settingsWindow && settingsWindow->isOpen()) {
-                                    settingsWindow->close();
+                                // Hide settings window instead of closing
+                                if (settingsWebView) {
+                                    if (settingsWebView->isWindowValid()) {
+                                        settingsWebView->hideWindow();
+                                        settingsWindowOpen = false;
+                                        LOG_INFO("Settings window hidden");
+                                    } else {
+                                        // Window was destroyed somehow, clean up
+                                        settingsWebView.reset();
+                                        settingsWindowOpen = false;
+                                    }
+                                } else {
+                                    settingsWindowOpen = false;
                                 }
-                                settingsWindowOpen = false;
-                                LOG_INFO("Settings window closed");
                             }
                         } else {
                             // Start dragging
@@ -775,80 +1189,8 @@ int main() {
             LOG_ERROR("Unknown exception updating counter text");
         }
         
-        // Handle settings window events
-        if (settingsWindow && settingsWindow->isOpen()) {
-            try {
-                while (const std::optional<sf::Event> settingsEventOpt = settingsWindow->pollEvent()) {
-                    const sf::Event& settingsEvent = *settingsEventOpt;
-                    if (settingsEvent.is<sf::Event::Closed>()) {
-                        settingsWindow->close();
-                        settingsWindowOpen = false;
-                        LOG_INFO("Settings window closed via close button");
-                    }
-                    else if (const auto* mousePressed = settingsEvent.getIf<sf::Event::MouseButtonPressed>()) {
-                        if (mousePressed->button == sf::Mouse::Button::Left) {
-                            sf::Vector2f mousePos(static_cast<float>(mousePressed->position.x), 
-                                                 static_cast<float>(mousePressed->position.y));
-                            
-                            // Check if clicking on a cat pack option (each cat is 60px tall, starting at y=80)
-                            // Clickable area is from x=20 to x=480, y=80 to y=80+count*60
-                            float catPackStartY = 80.0f;
-                            float catPackEndY = catPackStartY + availableCatPacks.size() * 60.0f;
-                            if (mousePos.x >= 20.0f && mousePos.x <= 480.0f &&
-                                mousePos.y >= catPackStartY && mousePos.y < catPackEndY) {
-                                int catIndex = static_cast<int>((mousePos.y - catPackStartY) / 60.0f);
-                                if (catIndex >= 0 && catIndex < static_cast<int>(availableCatPacks.size())) {
-                                    // Selected a different cat pack
-                                    selectedCatPackName = availableCatPacks[catIndex].name;
-                                    CatPackConfig newCatPack = availableCatPacks[catIndex];
-                                    
-                                    LOG_INFO("Cat pack selected: " + selectedCatPackName);
-                                    
-                                    // Update the bongo cat
-                                    bongoCat.setConfig(newCatPack);
-                                    
-                                    // Save selection
-                                    std::ofstream catPackOutFile(catPackConfigPath);
-                                    if (catPackOutFile.is_open()) {
-                                        catPackOutFile << selectedCatPackName;
-                                        catPackOutFile.close();
-                                        LOG_INFO("Cat pack selection saved: " + selectedCatPackName);
-                                    }
-                                }
-                            }
-                            
-                            // Check if clicking on a hat option (each hat is 60px tall, starting after cat packs)
-                            float hatStartY = catPackEndY + 40.0f; // 40px spacing between sections
-                            float hatEndY = hatStartY + availableHats.size() * 60.0f;
-                            if (mousePos.x >= 20.0f && mousePos.x <= 480.0f &&
-                                mousePos.y >= hatStartY && mousePos.y < hatEndY) {
-                                int hatIndex = static_cast<int>((mousePos.y - hatStartY) / 60.0f);
-                                if (hatIndex >= 0 && hatIndex < static_cast<int>(availableHats.size())) {
-                                    // Selected a different hat
-                                    selectedHatName = availableHats[hatIndex].name;
-                                    HatConfig newHat = availableHats[hatIndex];
-                                    
-                                    LOG_INFO("Hat selected: " + selectedHatName);
-                                    
-                                    // Update the bongo cat
-                                    bongoCat.setHat(newHat);
-                                    
-                                    // Save selection
-                                    std::ofstream hatOutFile(hatConfigPath);
-                                    if (hatOutFile.is_open()) {
-                                        hatOutFile << selectedHatName;
-                                        hatOutFile.close();
-                                        LOG_INFO("Hat selection saved: " + selectedHatName);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (const std::exception& e) {
-                LOG_ERROR("Exception handling settings window events: " + std::string(e.what()));
-            }
-        }
+        // Handle settings webview window (messages are handled via the message handler callback)
+        // Note: Window can no longer be closed externally - only hidden via custom navbar
         
         // Draw
         try {
@@ -891,133 +1233,7 @@ int main() {
             LOG_ERROR("Unknown exception in draw operations");
         }
         
-        // Draw settings window
-        if (settingsWindow && settingsWindow->isOpen()) {
-            try {
-                settingsWindow->clear(sf::Color(240, 240, 240)); // Light grey background
-                
-                if (fontLoaded) {
-                    // Title
-                    sf::Text titleText(font, "Select Cat Pack");
-                    titleText.setCharacterSize(24);
-                    titleText.setFillColor(sf::Color::Black);
-                    titleText.setPosition(sf::Vector2f(20.0f, 20.0f));
-                    settingsWindow->draw(titleText);
-                    
-                    // Draw each available cat pack
-                    float startY = 80.0f;
-                    for (size_t i = 0; i < availableCatPacks.size(); i++) {
-                        float yPos = startY + i * 60.0f;
-                        bool isSelected = (availableCatPacks[i].name == selectedCatPackName);
-                        
-                        // Draw clickable area background (always visible for better UX)
-                        sf::RectangleShape itemBg(sf::Vector2f(460.0f, 50.0f));
-                        itemBg.setPosition(sf::Vector2f(20.0f, yPos));
-                        itemBg.setFillColor(isSelected ? sf::Color(200, 220, 255) : sf::Color(255, 255, 255)); // Light blue if selected, white otherwise
-                        itemBg.setOutlineColor(sf::Color(200, 200, 200));
-                        itemBg.setOutlineThickness(1.0f);
-                        settingsWindow->draw(itemBg);
-                        
-                        // Try to load and draw icon if available
-                        if (!availableCatPacks[i].iconImage.empty()) {
-                            std::string iconPath = availableCatPacks[i].getImagePath(availableCatPacks[i].iconImage);
-                            static std::map<std::string, std::unique_ptr<sf::Texture>> iconTextures;
-                            static std::map<std::string, std::unique_ptr<sf::Sprite>> iconSprites;
-                            
-                            if (iconTextures.find(iconPath) == iconTextures.end()) {
-                                auto texture = std::make_unique<sf::Texture>();
-                                if (texture->loadFromFile(iconPath)) {
-                                    auto sprite = std::make_unique<sf::Sprite>(*texture);
-                                    // Scale icon to 40x40
-                                    sf::Vector2u iconSize = texture->getSize();
-                                    if (iconSize.x > 0 && iconSize.y > 0) {
-                                        float scaleX = 40.0f / iconSize.x;
-                                        float scaleY = 40.0f / iconSize.y;
-                                        sprite->setScale(sf::Vector2f(scaleX, scaleY));
-                                    }
-                                    iconTextures[iconPath] = std::move(texture);
-                                    iconSprites[iconPath] = std::move(sprite);
-                                }
-                            }
-                            
-                            if (iconSprites.find(iconPath) != iconSprites.end() && iconSprites[iconPath]) {
-                                iconSprites[iconPath]->setPosition(sf::Vector2f(30.0f, yPos + 5.0f));
-                                settingsWindow->draw(*iconSprites[iconPath]);
-                            }
-                        }
-                        
-                        // Draw cat pack name
-                        sf::Text nameText(font, availableCatPacks[i].name);
-                        nameText.setCharacterSize(18);
-                        nameText.setFillColor(isSelected ? sf::Color(0, 100, 200) : sf::Color::Black);
-                        nameText.setPosition(sf::Vector2f(80.0f, yPos + 15.0f));
-                        settingsWindow->draw(nameText);
-                    }
-                    
-                    // Hat section title
-                    float hatSectionStartY = 80.0f + availableCatPacks.size() * 60.0f + 20.0f;
-                    sf::Text hatTitleText(font, "Select Hat");
-                    hatTitleText.setCharacterSize(24);
-                    hatTitleText.setFillColor(sf::Color::Black);
-                    hatTitleText.setPosition(sf::Vector2f(20.0f, hatSectionStartY));
-                    settingsWindow->draw(hatTitleText);
-                    
-                    // Draw each available hat
-                    float hatStartY = hatSectionStartY + 40.0f;
-                    for (size_t i = 0; i < availableHats.size(); i++) {
-                        float yPos = hatStartY + i * 60.0f;
-                        bool isSelected = (availableHats[i].name == selectedHatName);
-                        
-                        // Draw clickable area background (always visible for better UX)
-                        sf::RectangleShape itemBg(sf::Vector2f(460.0f, 50.0f));
-                        itemBg.setPosition(sf::Vector2f(20.0f, yPos));
-                        itemBg.setFillColor(isSelected ? sf::Color(200, 220, 255) : sf::Color(255, 255, 255)); // Light blue if selected, white otherwise
-                        itemBg.setOutlineColor(sf::Color(200, 200, 200));
-                        itemBg.setOutlineThickness(1.0f);
-                        settingsWindow->draw(itemBg);
-                        
-                        // Try to load and draw icon if available
-                        if (!availableHats[i].iconImage.empty()) {
-                            std::string iconPath = availableHats[i].getImagePath(availableHats[i].iconImage);
-                            static std::map<std::string, std::unique_ptr<sf::Texture>> hatIconTextures;
-                            static std::map<std::string, std::unique_ptr<sf::Sprite>> hatIconSprites;
-                            
-                            if (hatIconTextures.find(iconPath) == hatIconTextures.end()) {
-                                auto texture = std::make_unique<sf::Texture>();
-                                if (texture->loadFromFile(iconPath)) {
-                                    auto sprite = std::make_unique<sf::Sprite>(*texture);
-                                    // Scale icon to 40x40
-                                    sf::Vector2u iconSize = texture->getSize();
-                                    if (iconSize.x > 0 && iconSize.y > 0) {
-                                        float scaleX = 40.0f / iconSize.x;
-                                        float scaleY = 40.0f / iconSize.y;
-                                        sprite->setScale(sf::Vector2f(scaleX, scaleY));
-                                    }
-                                    hatIconTextures[iconPath] = std::move(texture);
-                                    hatIconSprites[iconPath] = std::move(sprite);
-                                }
-                            }
-                            
-                            if (hatIconSprites.find(iconPath) != hatIconSprites.end() && hatIconSprites[iconPath]) {
-                                hatIconSprites[iconPath]->setPosition(sf::Vector2f(30.0f, yPos + 5.0f));
-                                settingsWindow->draw(*hatIconSprites[iconPath]);
-                            }
-                        }
-                        
-                        // Draw hat name
-                        sf::Text nameText(font, availableHats[i].name);
-                        nameText.setCharacterSize(18);
-                        nameText.setFillColor(isSelected ? sf::Color(0, 100, 200) : sf::Color::Black);
-                        nameText.setPosition(sf::Vector2f(80.0f, yPos + 15.0f));
-                        settingsWindow->draw(nameText);
-                    }
-                }
-                
-                settingsWindow->display();
-            } catch (const std::exception& e) {
-                LOG_ERROR("Exception drawing settings window: " + std::string(e.what()));
-            }
-        }
+        // Settings webview window is rendered by webview itself, no need to draw here
         
         // Log every 1000 iterations for debugging
         if (loopIteration % 1000 == 0) {
@@ -1049,11 +1265,12 @@ int main() {
         LOG_ERROR("Unknown exception shutting down mouse hook");
     }
     
-    // Close settings window if open
-    if (settingsWindow && settingsWindow->isOpen()) {
+    // Close settings webview window if open
+    if (settingsWebView) {
         try {
-            settingsWindow->close();
-            LOG_INFO("Settings window closed during shutdown");
+            settingsWebView->shutdown();
+            settingsWebView.reset();
+            LOG_INFO("Settings webview window closed during shutdown");
         } catch (...) {
             // Ignore errors during shutdown
         }

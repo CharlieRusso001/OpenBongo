@@ -24,6 +24,9 @@ struct CatPackConfig {
     float rightArmOffsetY = 0.0f;
     float rightArmOffsetZ = 0.0f;
     
+    // UI ordering weight (higher weight appears earlier in the UI)
+    float weight = 0.0f;
+    
     // Arm spacing multipliers (for positioning relative to body)
     float leftArmSpacing = 1.1f;         // Multiplier for left arm spacing
     float rightArmSpacing = 1.0f;        // Multiplier for right arm spacing

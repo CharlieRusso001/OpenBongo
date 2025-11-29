@@ -62,10 +62,43 @@ You may need to grant accessibility permissions:
 - **Animation**: Arms move down when keys are pressed
 - **Window**: Small, always-on-top, draggable window
 
+## Third-Party Dependencies
+
+- **SFML** (Simple and Fast Multimedia Library)  
+  - Used for the main window, rendering, and input handling.  
+  - License: zlib/libpng
+
+- **Crow** (`third_party/crow`)  
+  - C++ HTTP microframework used for the embedded local web server that serves the HTML/JS settings UI.  
+  - License: BSD-3-Clause  
+  - Recommended setup (from the project root):
+    ```bash
+    git clone https://github.com/CrowCpp/Crow.git third_party/crow
+    ```
+
+- **webview** (`third_party/webview`)  
+  - Lightweight cross‑platform webview library used to display the HTML settings UI in a native window.  
+  - License: MIT  
+  - Recommended setup (from the project root):
+    ```bash
+    git clone https://github.com/webview/webview.git third_party/webview
+    ```
+
+## Cat Pack Credits
+
+Built-in and example cat packs included in this repository:
+
+- **Dev Art Cats** (`catpacks/DevArt`)  
+  - Charlie
+
+- **Scribble Cats** (`catpacks/DarkScribbleCat`)  
+  - Xan
+
+If you make your own catpacks please create a pull request or reach out on Discord and we will add it to the repository.
+
 ## Future Enhancements
 
-- Replace developer art
-- Add multiplayer
+- Add multiplayer (Not soon)
 - Add more animations
 - Add configuration options
 - Add sound effects

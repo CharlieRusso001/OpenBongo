@@ -105,6 +105,9 @@ bool CatPackConfig::loadFromFile(const std::string& configPath, CatPackConfig& c
         else if (keyLower == "punchoffsety" || keyLower == "punch_offset_y") {
             config.punchOffsetY = std::stof(value);
         }
+        else if (keyLower == "weight") {
+            config.weight = std::stof(value);
+        }
     }
     
     file.close();

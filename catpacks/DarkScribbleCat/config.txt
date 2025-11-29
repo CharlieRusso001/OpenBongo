@@ -1,29 +1,31 @@
 # DevArt Cat Configuration
 # This file configures the DevArt bongo cat pack
 
-name=Dev Art Cat
-bodyImage=body-devartcat.png
-handUpImage=handup-devartcat.png
-handDownImage=handdown-devartcat.png
-iconImage=test.jpg
+name=Dark Scribble Cat
+bodyImage=body-darkscribblecat.png
+handUpImage=handup-darkscribblecat2.png
+handDownImage=handdown-darkscribblecat.png
+iconImage=body-darkscribblecat.png
+
+# UI ordering weight (higher appears earlier in UI)
+weight=99.9
 
 # Body offsets (relative to base position)
 bodyOffsetX=0.0
-bodyOffsetY=0.0
+bodyOffsetY=8.0
 bodyOffsetZ=0.0
 
 # Left arm offsets
 leftArmOffsetX=0.0
 leftArmOffsetY=0.0
-leftArmOffsetZ=0.0
+leftArmOffsetZ=-5.0
 leftArmSpacing=1.1
 
 # Right arm offsets
 rightArmOffsetX=0.0
 rightArmOffsetY=0.0
-rightArmOffsetZ=0.0
-rightArmSpacing=1.0
+rightArmOffsetZ=-5.0
+rightArmSpacing=2.2
 
 # Punch animation offset (multiplier for how high arms move)
-punchOffsetY=0.3
-
+punchOffsetY=0.1
