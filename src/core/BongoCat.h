@@ -2,8 +2,8 @@
 
 #include <SFML/Graphics.hpp>
 #include <memory>
-#include "CatPackConfig.h"
-#include "HatConfig.h"
+#include "config/CatPackConfig.h"
+#include "config/HatConfig.h"
 
 class BongoCat {
 public:
@@ -20,6 +20,7 @@ public:
     void setConfig(const CatPackConfig& config); // Change cat pack configuration
     void setHat(const HatConfig& hat); // Change hat configuration
     void setSize(float newSize); // Change cat size
+    void setFlip(bool flipped); // Flip cat horizontally (mirror on vertical line)
     
 private:
     sf::Vector2f position;
@@ -72,11 +73,15 @@ private:
     // Track current texture state to avoid unnecessary sprite recreation
     bool usingHandDownTexture;
     
+    // Flip state
+    bool isFlipped;
+    
     void updateAnimation(float deltaTime);
     void updateArmPositions();
     bool loadTextures();
     bool loadHatTexture(); // Load hat texture
     void recalculatePositions(); // Recalculate positions when config changes
     void updateHatPosition(); // Update hat position relative to body
+    void applyFlip(); // Apply flip state to sprites
 };
 

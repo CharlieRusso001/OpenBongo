@@ -1,0 +1,9 @@
+# Meow Entity SFX Configuration
+# This file configures the meow entity sound effect
+
+name=Meow
+entitySound=meow.mp3
+iconImage=
+volume=100.0
+weight=100
+

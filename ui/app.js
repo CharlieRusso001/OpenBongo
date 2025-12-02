@@ -2,12 +2,27 @@
 let state = {
     catPacks: [],
     hats: [],
+    bonkPacks: [],
     selectedCatPack: '',
     selectedHat: '',
+    selectedBonkPack: '',
     currentTab: 'cats',
     darkMode: false,
     catSize: 100,
-    accentColor: '#4a90e2'
+    accentColor: '#4a90e2',
+    uiOffset: 0,
+    uiHorizontalOffset: 0,
+    sfxVolume: 100,
+    catFlipped: false,
+    particleEffectsEnabled: true,
+    particleDensity: 100
+};
+
+// Track if items have been animated (to prevent re-animation on selection changes)
+let itemsAnimated = {
+    catPacks: false,
+    hats: false,
+    bonkPacks: false
 };
 
 // Initialize
@@ -39,7 +54,7 @@ function initializeUI() {
     }
     
     // Setup tab switching
-    const tabButtons = document.querySelectorAll('.tab-button:not(.discord-button)');
+    const tabButtons = document.querySelectorAll('.tab-button:not(.discord-button):not(.github-button)');
     tabButtons.forEach(button => {
         button.addEventListener('click', (e) => {
             e.preventDefault();
@@ -49,13 +64,31 @@ function initializeUI() {
         });
     });
     
-    // Setup Discord button to open URL in default browser
+    // Setup GitHub button to open URL in default browser and close UI
+    const githubButton = document.getElementById('tab-github');
+    if (githubButton) {
+        githubButton.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sendMessage('openURL', { url: 'https://github.com/CharlieRusso001/OpenBongo' });
+            // Close the UI after opening GitHub
+            setTimeout(() => {
+                sendMessage('hideWindow');
+            }, 100);
+        });
+    }
+    
+    // Setup Discord button to open URL in default browser and close UI
     const discordButton = document.getElementById('tab-discord');
     if (discordButton) {
         discordButton.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
             sendMessage('openURL', { url: 'https://discord.gg/TVw6h5TBqJ' });
+            // Close the UI after opening Discord
+            setTimeout(() => {
+                sendMessage('hideWindow');
+            }, 100);
         });
     }
     
@@ -108,8 +141,126 @@ function initializeUI() {
         });
     }
     
+    // Setup UI offset slider
+    const uiOffsetSlider = document.getElementById('ui-offset-slider');
+    const uiOffsetValue = document.getElementById('ui-offset-value');
+    if (uiOffsetSlider && uiOffsetValue) {
+        // Load saved UI offset
+        loadUIOffsetPreference();
+        uiOffsetSlider.value = state.uiOffset || 0;
+        uiOffsetValue.textContent = state.uiOffset || 0;
+        
+        uiOffsetSlider.addEventListener('input', (e) => {
+            const offset = parseInt(e.target.value);
+            state.uiOffset = offset;
+            uiOffsetValue.textContent = offset;
+            sendMessage('setUIOffset', { offset });
+            saveUIOffsetPreference();
+        });
+    }
+    
+    // Setup UI horizontal offset slider
+    const uiHorizontalOffsetSlider = document.getElementById('ui-horizontal-offset-slider');
+    const uiHorizontalOffsetValue = document.getElementById('ui-horizontal-offset-value');
+    if (uiHorizontalOffsetSlider && uiHorizontalOffsetValue) {
+        // Load saved UI horizontal offset
+        loadUIHorizontalOffsetPreference();
+        uiHorizontalOffsetSlider.value = state.uiHorizontalOffset || 0;
+        uiHorizontalOffsetValue.textContent = state.uiHorizontalOffset || 0;
+        
+        uiHorizontalOffsetSlider.addEventListener('input', (e) => {
+            const offset = parseInt(e.target.value);
+            state.uiHorizontalOffset = offset;
+            uiHorizontalOffsetValue.textContent = offset;
+            sendMessage('setUIHorizontalOffset', { offset });
+            saveUIHorizontalOffsetPreference();
+        });
+    }
+    
+    // Setup cat flip toggle
+    const catFlipToggle = document.getElementById('cat-flip-toggle');
+    if (catFlipToggle) {
+        // Load saved cat flip preference
+        loadCatFlipPreference();
+        catFlipToggle.checked = state.catFlipped;
+        
+        catFlipToggle.addEventListener('change', (e) => {
+            state.catFlipped = e.target.checked;
+            sendMessage('setCatFlip', { flipped: state.catFlipped });
+            saveCatFlipPreference();
+        });
+    }
+    
+    // Setup particle effects toggle
+    const particleEffectsToggle = document.getElementById('particle-effects-toggle');
+    if (particleEffectsToggle) {
+        loadParticleEffectsPreference();
+        particleEffectsToggle.checked = state.particleEffectsEnabled;
+        
+        particleEffectsToggle.addEventListener('change', (e) => {
+            state.particleEffectsEnabled = e.target.checked;
+            saveParticleEffectsPreference();
+            // Remove existing effects and reapply if enabled
+            removeAllParticleEffects();
+            if (state.particleEffectsEnabled) {
+                checkAndApplySeasonalEffects();
+            }
+        });
+    }
+    
+    // Setup particle density slider
+    const particleDensitySlider = document.getElementById('particle-density-slider');
+    const particleDensityValue = document.getElementById('particle-density-value');
+    if (particleDensitySlider && particleDensityValue) {
+        loadParticleDensityPreference();
+        particleDensitySlider.value = state.particleDensity || 100;
+        particleDensityValue.textContent = (state.particleDensity || 100) + '%';
+        
+        particleDensitySlider.addEventListener('input', (e) => {
+            const density = parseInt(e.target.value);
+            state.particleDensity = density;
+            particleDensityValue.textContent = density + '%';
+            saveParticleDensityPreference();
+            // Reapply effects with new density
+            if (state.particleEffectsEnabled) {
+                removeAllParticleEffects();
+                checkAndApplySeasonalEffects();
+            }
+        });
+    }
+    
+    // Setup SFX volume slider
+    const sfxVolumeSlider = document.getElementById('sfx-volume-slider');
+    const sfxVolumeValue = document.getElementById('sfx-volume-value');
+    if (sfxVolumeSlider && sfxVolumeValue) {
+        loadSFXVolumePreference();
+        sfxVolumeSlider.value = state.sfxVolume || 100;
+        sfxVolumeValue.textContent = (state.sfxVolume || 100) + '%';
+        
+        sfxVolumeSlider.addEventListener('input', (e) => {
+            const volume = parseInt(e.target.value);
+            state.sfxVolume = volume;
+            sfxVolumeValue.textContent = volume + '%';
+            sendMessage('setSFXVolume', { volume });
+            saveSFXVolumePreference();
+        });
+    }
+    
     // Apply initial dark mode
     applyDarkMode(state.darkMode);
+    
+    // Setup shutdown button
+    const shutdownBtn = document.getElementById('shutdown-btn');
+    if (shutdownBtn) {
+        shutdownBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            sendMessage('shutdown');
+        });
+    }
+    
+    // Check for seasonal/holiday effects based on current date
+    checkAndApplySeasonalEffects();
     
     // Load initial data for active tab
     switchTab('cats');
@@ -120,6 +271,15 @@ function switchTab(tabName) {
     
     // Update state
     state.currentTab = tabName;
+    
+    // Reset animation flags when switching tabs (so items animate in)
+    if (tabName === 'cats') {
+        itemsAnimated.catPacks = false;
+    } else if (tabName === 'hats') {
+        itemsAnimated.hats = false;
+    } else if (tabName === 'sfx') {
+        itemsAnimated.bonkPacks = false;
+    }
     
     // Update tab buttons
     document.querySelectorAll('.tab-button').forEach(btn => {
@@ -146,14 +306,18 @@ function switchTab(tabName) {
     } else if (tabName === 'hats') {
         console.log('Loading hats for hats tab...');
         requestHats();
+    } else if (tabName === 'sfx') {
+        console.log('Loading SFX for sfx tab...');
+        requestBonkPacks();
     }
 }
 
 function requestInitialData() {
-    // Request initial cat pack and hat
+    // Request initial cat pack, hat, and bonk pack
     console.log('Requesting initial data...');
     sendMessage('getSelectedCatPack');
     sendMessage('getSelectedHat');
+    sendMessage('getSelectedBonkPack');
     
     // Also request lists for current tab
     if (state.currentTab === 'cats') {
@@ -172,6 +336,12 @@ function requestHats() {
     console.log('Requesting hats...');
     sendMessage('getHats');
 }
+
+function requestBonkPacks() {
+    console.log('Requesting bonk packs...');
+    sendMessage('getBonkPacks');
+}
+
 
 function setupMessageHandlers() {
     // Handle messages from C++ backend via MessageEvent
@@ -237,10 +407,8 @@ function handleMessage(message) {
             if (packName) {
                 console.log('Selected cat pack:', packName);
                 state.selectedCatPack = packName;
-                // Refresh the list to show selection
-                if (state.catPacks.length > 0) {
-                    updateCatPackList(state.catPacks);
-                }
+                // Update selection state without recreating items
+                updateCatPackSelection();
             }
             break;
         case 'selectedHat':
@@ -248,10 +416,17 @@ function handleMessage(message) {
             if (hatName) {
                 console.log('Selected hat:', hatName);
                 state.selectedHat = hatName;
-                // Refresh the list to show selection
-                if (state.hats.length > 0) {
-                    updateHatList(state.hats);
-                }
+                // Update selection state without recreating items
+                updateHatSelection();
+            }
+            break;
+        case 'selectedBonkPack':
+            const bonkPackName = (data && data.name) ? data.name : '';
+            if (bonkPackName) {
+                console.log('Selected bonk pack:', bonkPackName);
+                state.selectedBonkPack = bonkPackName;
+                // Update selection state without recreating items
+                updateBonkPackSelection();
             }
             break;
         case 'catSize':
@@ -279,6 +454,55 @@ function handleMessage(message) {
                 updateAccentColor(color);
             }
             break;
+        case 'uiOffset':
+            const offset = (data && data.offset !== undefined) ? data.offset : 0;
+            if (offset >= -50 && offset <= 50) {
+                state.uiOffset = offset;
+                const uiOffsetSlider = document.getElementById('ui-offset-slider');
+                const uiOffsetValue = document.getElementById('ui-offset-value');
+                if (uiOffsetSlider && uiOffsetValue) {
+                    uiOffsetSlider.value = offset;
+                    uiOffsetValue.textContent = offset;
+                }
+            }
+            break;
+        case 'uiHorizontalOffset':
+            const horizontalOffset = (data && data.offset !== undefined) ? data.offset : 0;
+            if (horizontalOffset >= -50 && horizontalOffset <= 50) {
+                state.uiHorizontalOffset = horizontalOffset;
+                const uiHorizontalOffsetSlider = document.getElementById('ui-horizontal-offset-slider');
+                const uiHorizontalOffsetValue = document.getElementById('ui-horizontal-offset-value');
+                if (uiHorizontalOffsetSlider && uiHorizontalOffsetValue) {
+                    uiHorizontalOffsetSlider.value = horizontalOffset;
+                    uiHorizontalOffsetValue.textContent = horizontalOffset;
+                }
+            }
+            break;
+        case 'sfxVolume':
+            const volume = (data && data.volume !== undefined) ? data.volume : 100;
+            if (volume >= 0 && volume <= 100) {
+                state.sfxVolume = volume;
+                const sfxVolumeSlider = document.getElementById('sfx-volume-slider');
+                const sfxVolumeValue = document.getElementById('sfx-volume-value');
+                if (sfxVolumeSlider && sfxVolumeValue) {
+                    sfxVolumeSlider.value = volume;
+                    sfxVolumeValue.textContent = volume + '%';
+                }
+            }
+            break;
+        case 'catFlip':
+            const flipped = (data && data.flipped !== undefined) ? data.flipped : false;
+            state.catFlipped = flipped;
+            const catFlipToggle = document.getElementById('cat-flip-toggle');
+            if (catFlipToggle) {
+                catFlipToggle.checked = flipped;
+            }
+            break;
+        case 'bonkPackList':
+            const bonkPacks = Array.isArray(data) ? data : [];
+            console.log('Updating bonk pack list with', bonkPacks.length, 'packs');
+            updateBonkPackList(bonkPacks);
+            break;
         default:
             console.log('Unknown message type:', type);
     }
@@ -299,11 +523,23 @@ function updateCatPackList(catPacks) {
         return;
     }
     
-    state.catPacks.forEach(pack => {
+    const shouldAnimate = !itemsAnimated.catPacks;
+    itemsAnimated.catPacks = true;
+    
+    state.catPacks.forEach((pack, index) => {
         const item = document.createElement('div');
         item.className = 'selection-item';
         if (pack.name === state.selectedCatPack) {
             item.classList.add('selected');
+        }
+        
+        // Only set animation delay if items haven't been animated yet
+        if (shouldAnimate) {
+            item.style.animationDelay = `${0.1 + (index * 0.05)}s`;
+        } else {
+            // If already animated, set opacity to 1 immediately
+            item.style.opacity = '1';
+            item.style.transform = 'translateY(0) scale(1)';
         }
         
         // Icon
@@ -331,6 +567,25 @@ function updateCatPackList(catPacks) {
     });
 }
 
+function updateCatPackSelection() {
+    // Update selection state without recreating items
+    const list = document.getElementById('cat-pack-list');
+    if (!list) return;
+    
+    const items = list.querySelectorAll('.selection-item');
+    items.forEach(item => {
+        const nameElement = item.querySelector('.selection-item-name');
+        if (nameElement) {
+            const itemName = nameElement.textContent;
+            if (itemName === state.selectedCatPack) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        }
+    });
+}
+
 function updateHatList(hats) {
     state.hats = Array.isArray(hats) ? hats : [];
     const list = document.getElementById('hat-list');
@@ -346,11 +601,23 @@ function updateHatList(hats) {
         return;
     }
     
-    state.hats.forEach(hat => {
+    const shouldAnimate = !itemsAnimated.hats;
+    itemsAnimated.hats = true;
+    
+    state.hats.forEach((hat, index) => {
         const item = document.createElement('div');
         item.className = 'selection-item';
         if (hat.name === state.selectedHat) {
             item.classList.add('selected');
+        }
+        
+        // Only set animation delay if items haven't been animated yet
+        if (shouldAnimate) {
+            item.style.animationDelay = `${0.1 + (index * 0.05)}s`;
+        } else {
+            // If already animated, set opacity to 1 immediately
+            item.style.opacity = '1';
+            item.style.transform = 'translateY(0) scale(1)';
         }
         
         // Icon
@@ -378,18 +645,152 @@ function updateHatList(hats) {
     });
 }
 
+function updateHatSelection() {
+    // Update selection state without recreating items
+    const list = document.getElementById('hat-list');
+    if (!list) return;
+    
+    const items = list.querySelectorAll('.selection-item');
+    items.forEach(item => {
+        const nameElement = item.querySelector('.selection-item-name');
+        if (nameElement) {
+            const itemName = nameElement.textContent;
+            if (itemName === state.selectedHat) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        }
+    });
+}
+
+function updateBonkPackList(bonkPacks) {
+    state.bonkPacks = Array.isArray(bonkPacks) ? bonkPacks : [];
+    const list = document.getElementById('bonk-pack-list');
+    if (!list) return;
+    
+    list.innerHTML = '';
+    
+    // Add "No SFX" option at the beginning
+    const noSFXOption = { name: 'No SFX', iconPath: '' };
+    const allBonkPacks = [noSFXOption, ...state.bonkPacks];
+    
+    if (allBonkPacks.length === 0) {
+        const emptyMsg = document.createElement('div');
+        emptyMsg.className = 'settings-placeholder';
+        emptyMsg.textContent = 'No bonk packs available';
+        list.appendChild(emptyMsg);
+        return;
+    }
+    
+    const shouldAnimate = !itemsAnimated.bonkPacks;
+    itemsAnimated.bonkPacks = true;
+    
+    allBonkPacks.forEach((pack, index) => {
+        const item = document.createElement('div');
+        item.className = 'selection-item';
+        if (pack.name === state.selectedBonkPack) {
+            item.classList.add('selected');
+        }
+        
+        // Only set animation delay if items haven't been animated yet
+        if (shouldAnimate) {
+            item.style.animationDelay = `${0.1 + (index * 0.05)}s`;
+        } else {
+            item.style.opacity = '1';
+            item.style.transform = 'translateY(0) scale(1)';
+        }
+        
+        // Icon - handle "No SFX" specially to avoid double emoji
+        if (pack.name === 'No SFX') {
+            // For "No SFX", show mute icon directly (no img element)
+            const emojiIcon = document.createElement('div');
+            emojiIcon.className = 'selection-item-icon';
+            emojiIcon.style.display = 'flex';
+            emojiIcon.style.alignItems = 'center';
+            emojiIcon.style.justifyContent = 'center';
+            emojiIcon.style.fontSize = '48px';
+            emojiIcon.textContent = '🔇';
+            item.appendChild(emojiIcon);
+        } else {
+            // For other packs, use img with fallback
+            const icon = document.createElement('img');
+            icon.className = 'selection-item-icon';
+            icon.src = pack.iconPath || '';
+            icon.alt = pack.name || 'Bonk Pack';
+            icon.onerror = () => {
+                // Fallback to emoji if image fails
+                icon.style.display = 'none';
+                const emojiIcon = document.createElement('div');
+                emojiIcon.className = 'selection-item-icon';
+                emojiIcon.style.display = 'flex';
+                emojiIcon.style.alignItems = 'center';
+                emojiIcon.style.justifyContent = 'center';
+                emojiIcon.style.fontSize = '48px';
+                emojiIcon.textContent = '🔊';
+                item.insertBefore(emojiIcon, item.firstChild);
+            };
+            item.appendChild(icon);
+        }
+        
+        // Name
+        const name = document.createElement('span');
+        name.className = 'selection-item-name';
+        name.textContent = pack.name || 'Unknown';
+        
+        item.appendChild(name);
+        
+        item.addEventListener('click', () => {
+            selectBonkPack(pack.name);
+        });
+        
+        list.appendChild(item);
+    });
+}
+
+function updateBonkPackSelection() {
+    // Update selection state without recreating items
+    const list = document.getElementById('bonk-pack-list');
+    if (!list) return;
+    
+    const items = list.querySelectorAll('.selection-item');
+    items.forEach(item => {
+        const nameElement = item.querySelector('.selection-item-name');
+        if (nameElement) {
+            const itemName = nameElement.textContent;
+            if (itemName === state.selectedBonkPack) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        }
+    });
+    
+    // Ensure accent color is applied (in case it wasn't set yet)
+    if (state.accentColor) {
+        updateAccentColor(state.accentColor);
+    }
+}
+
+function selectBonkPack(name) {
+    if (!name) return;
+    sendMessage('selectBonkPack', { name });
+    state.selectedBonkPack = name;
+    updateBonkPackSelection();
+}
+
 function selectCatPack(name) {
     if (!name) return;
     sendMessage('selectCatPack', { name });
     state.selectedCatPack = name;
-    updateCatPackList(state.catPacks);
+    updateCatPackSelection();
 }
 
 function selectHat(name) {
     if (!name) return;
     sendMessage('selectHat', { name });
     state.selectedHat = name;
-    updateHatList(state.hats);
+    updateHatSelection();
 }
 
 function sendMessage(type, data = {}) {
@@ -536,5 +937,497 @@ function saveAccentColorPreference() {
         localStorage.setItem('openBongoAccentColor', state.accentColor);
     } catch (e) {
         console.error('Failed to save accent color preference:', e);
+    }
+}
+
+function loadUIOffsetPreference() {
+    try {
+        const saved = localStorage.getItem('openBongoUIOffset');
+        if (saved !== null) {
+            state.uiOffset = parseInt(saved) || 0;
+        }
+    } catch (e) {
+        console.error('Failed to load UI offset preference:', e);
+    }
+}
+
+function saveUIOffsetPreference() {
+    try {
+        localStorage.setItem('openBongoUIOffset', state.uiOffset.toString());
+    } catch (e) {
+        console.error('Failed to save UI offset preference:', e);
+    }
+}
+
+function loadUIHorizontalOffsetPreference() {
+    try {
+        const saved = localStorage.getItem('openBongoUIHorizontalOffset');
+        if (saved !== null) {
+            state.uiHorizontalOffset = parseInt(saved) || 0;
+        }
+    } catch (e) {
+        console.error('Failed to load UI horizontal offset preference:', e);
+    }
+}
+
+function saveUIHorizontalOffsetPreference() {
+    try {
+        localStorage.setItem('openBongoUIHorizontalOffset', state.uiHorizontalOffset.toString());
+    } catch (e) {
+        console.error('Failed to save UI horizontal offset preference:', e);
+    }
+}
+
+function loadCatFlipPreference() {
+    try {
+        const saved = localStorage.getItem('openBongoCatFlip');
+        if (saved !== null) {
+            state.catFlipped = saved === 'true';
+        }
+    } catch (e) {
+        console.error('Failed to load cat flip preference:', e);
+    }
+}
+
+function saveCatFlipPreference() {
+    try {
+        localStorage.setItem('openBongoCatFlip', state.catFlipped.toString());
+    } catch (e) {
+        console.error('Failed to save cat flip preference:', e);
+    }
+}
+
+function checkAndApplySeasonalEffects() {
+    if (!state.particleEffectsEnabled) {
+        return;
+    }
+    
+    const currentDate = new Date();
+    const month = currentDate.getMonth(); // 0-indexed (0 = January)
+    const day = currentDate.getDate();
+    
+    // Check for specific holidays first (they override month-based effects)
+    if ((month === 11 && day === 31) || (month === 0 && day === 1)) {
+        // New Year's Eve (Dec 31) or New Year's Day (Jan 1)
+        addFireworksEffect();
+    } else if (month === 11 && day === 25) {
+        // Christmas (Dec 25) - candy canes and Christmas items
+        addChristmasEffect();
+    } else if (month === 1 && day === 14) {
+        // Valentine's Day (Feb 14)
+        addHeartsEffect();
+    } else if (month === 10) {
+        // November - falling leaves
+        addLeavesEffect();
+    } else if (month === 11) {
+        // December (but not Christmas) - snow
+        addSnowEffect();
+    }
+}
+
+function removeAllParticleEffects() {
+    // Clear fireworks interval
+    if (fireworksIntervalId) {
+        clearInterval(fireworksIntervalId);
+        fireworksIntervalId = null;
+    }
+    
+    const containers = [
+        document.getElementById('snow-container'),
+        document.getElementById('leaves-container'),
+        document.getElementById('hearts-container'),
+        document.getElementById('christmas-container'),
+        document.getElementById('fireworks-container')
+    ];
+    
+    containers.forEach(container => {
+        if (container && container.parentNode) {
+            container.parentNode.removeChild(container);
+        }
+    });
+}
+
+function loadParticleEffectsPreference() {
+    try {
+        const saved = localStorage.getItem('openBongoParticleEffects');
+        if (saved !== null) {
+            state.particleEffectsEnabled = saved === 'true';
+        }
+    } catch (e) {
+        console.error('Failed to load particle effects preference:', e);
+    }
+}
+
+function saveParticleEffectsPreference() {
+    try {
+        localStorage.setItem('openBongoParticleEffects', state.particleEffectsEnabled.toString());
+    } catch (e) {
+        console.error('Failed to save particle effects preference:', e);
+    }
+}
+
+function loadParticleDensityPreference() {
+    try {
+        const saved = localStorage.getItem('openBongoParticleDensity');
+        if (saved !== null) {
+            state.particleDensity = parseInt(saved) || 100;
+        }
+    } catch (e) {
+        console.error('Failed to load particle density preference:', e);
+    }
+}
+
+function saveParticleDensityPreference() {
+    try {
+        localStorage.setItem('openBongoParticleDensity', state.particleDensity.toString());
+    } catch (e) {
+        console.error('Failed to save particle density preference:', e);
+    }
+}
+
+function loadSFXVolumePreference() {
+    try {
+        const saved = localStorage.getItem('openBongoSFXVolume');
+        if (saved !== null) {
+            state.sfxVolume = parseInt(saved) || 100;
+        }
+    } catch (e) {
+        console.error('Failed to load SFX volume preference:', e);
+    }
+}
+
+function saveSFXVolumePreference() {
+    try {
+        localStorage.setItem('openBongoSFXVolume', state.sfxVolume.toString());
+    } catch (e) {
+        console.error('Failed to save SFX volume preference:', e);
+    }
+}
+
+function addSnowEffect() {
+    // Create snow container
+    const snowContainer = document.createElement('div');
+    snowContainer.id = 'snow-container';
+    snowContainer.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    `;
+    document.body.appendChild(snowContainer);
+    
+    // Calculate count based on density (base 50, scaled by density percentage)
+    const baseCount = 50;
+    const snowflakeCount = Math.floor(baseCount * (state.particleDensity / 100));
+    
+    for (let i = 0; i < snowflakeCount; i++) {
+        createSnowflake(snowContainer, i);
+    }
+}
+
+function createSnowflake(container, index) {
+    const snowflake = document.createElement('div');
+    snowflake.className = 'snowflake';
+    snowflake.textContent = '❄';
+    
+    const size = Math.random() * 10 + 10;
+    const duration = Math.random() * 3 + 2;
+    const delay = Math.random() * 2;
+    const startX = Math.random() * 100;
+    const drift = (Math.random() - 0.5) * 40; // Random horizontal drift
+    
+    snowflake.style.cssText = `
+        position: absolute;
+        color: white;
+        font-size: ${size}px;
+        top: -20px;
+        left: ${startX}%;
+        opacity: ${Math.random() * 0.5 + 0.5};
+        animation: snowfall ${duration}s linear infinite;
+        animation-delay: ${delay}s;
+        text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+    `;
+    
+    // Set custom property for drift amount
+    snowflake.style.setProperty('--drift', `${drift}px`);
+    
+    container.appendChild(snowflake);
+}
+
+function addLeavesEffect() {
+    const container = document.createElement('div');
+    container.id = 'leaves-container';
+    container.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    `;
+    document.body.appendChild(container);
+    
+    const baseCount = 30;
+    const leafCount = Math.floor(baseCount * (state.particleDensity / 100));
+    const leafEmojis = ['🍂', '🍁', '🍃'];
+    
+    for (let i = 0; i < leafCount; i++) {
+        createLeaf(container, leafEmojis[Math.floor(Math.random() * leafEmojis.length)]);
+    }
+}
+
+function createLeaf(container, emoji) {
+    const leaf = document.createElement('div');
+    leaf.className = 'leaf';
+    leaf.textContent = emoji;
+    
+    const size = Math.random() * 15 + 15;
+    const duration = Math.random() * 4 + 3;
+    const delay = Math.random() * 2;
+    const startX = Math.random() * 100;
+    const drift = (Math.random() - 0.5) * 60;
+    const rotation = Math.random() * 360;
+    
+    leaf.style.cssText = `
+        position: absolute;
+        font-size: ${size}px;
+        top: -30px;
+        left: ${startX}%;
+        opacity: ${Math.random() * 0.4 + 0.6};
+        animation: leafFall ${duration}s linear infinite;
+        animation-delay: ${delay}s;
+        transform: rotate(${rotation}deg);
+    `;
+    
+    leaf.style.setProperty('--drift', `${drift}px`);
+    leaf.style.setProperty('--rotation', `${rotation + 720}deg`);
+    
+    container.appendChild(leaf);
+}
+
+function addHeartsEffect() {
+    const container = document.createElement('div');
+    container.id = 'hearts-container';
+    container.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    `;
+    document.body.appendChild(container);
+    
+    const baseCount = 40;
+    const heartCount = Math.floor(baseCount * (state.particleDensity / 100));
+    const heartColors = ['❤️', '💕', '💖', '💗', '💓', '💝'];
+    
+    for (let i = 0; i < heartCount; i++) {
+        createHeart(container, heartColors[Math.floor(Math.random() * heartColors.length)]);
+    }
+}
+
+function createHeart(container, emoji) {
+    const heart = document.createElement('div');
+    heart.className = 'heart';
+    heart.textContent = emoji;
+    
+    const size = Math.random() * 12 + 12;
+    const duration = Math.random() * 3 + 2;
+    const delay = Math.random() * 2;
+    const startX = Math.random() * 100;
+    const drift = (Math.random() - 0.5) * 30;
+    
+    heart.style.cssText = `
+        position: absolute;
+        font-size: ${size}px;
+        top: -20px;
+        left: ${startX}%;
+        opacity: ${Math.random() * 0.5 + 0.5};
+        animation: heartFall ${duration}s ease-in-out infinite;
+        animation-delay: ${delay}s;
+    `;
+    
+    heart.style.setProperty('--drift', `${drift}px`);
+    
+    container.appendChild(heart);
+}
+
+function addChristmasEffect() {
+    const container = document.createElement('div');
+    container.id = 'christmas-container';
+    container.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    `;
+    document.body.appendChild(container);
+    
+    const baseCount = 50;
+    const itemCount = Math.floor(baseCount * (state.particleDensity / 100));
+    const christmasItems = ['🎄', '🎁', '🎅', '🤶', '🦌', '⭐', '❄️', '🧦', '🔔'];
+    
+    for (let i = 0; i < itemCount; i++) {
+        createChristmasItem(container, christmasItems[Math.floor(Math.random() * christmasItems.length)]);
+    }
+}
+
+function createChristmasItem(container, emoji) {
+    const item = document.createElement('div');
+    item.className = 'christmas-item';
+    item.textContent = emoji;
+    
+    const size = Math.random() * 12 + 12;
+    const duration = Math.random() * 3 + 2;
+    const delay = Math.random() * 2;
+    const startX = Math.random() * 100;
+    const drift = (Math.random() - 0.5) * 40;
+    const rotation = Math.random() * 360;
+    
+    item.style.cssText = `
+        position: absolute;
+        font-size: ${size}px;
+        top: -20px;
+        left: ${startX}%;
+        opacity: ${Math.random() * 0.5 + 0.5};
+        animation: christmasFall ${duration}s linear infinite;
+        animation-delay: ${delay}s;
+        transform: rotate(${rotation}deg);
+    `;
+    
+    item.style.setProperty('--drift', `${drift}px`);
+    item.style.setProperty('--rotation', `${rotation + 720}deg`);
+    
+    container.appendChild(item);
+}
+
+let fireworksIntervalId = null;
+
+function addFireworksEffect() {
+    const container = document.createElement('div');
+    container.id = 'fireworks-container';
+    container.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    `;
+    document.body.appendChild(container);
+    
+    // Create periodic fireworks bursts
+    function createFirework() {
+        if (!state.particleEffectsEnabled) {
+            return;
+        }
+        const x = Math.random() * 100;
+        const y = Math.random() * 50 + 20; // Between 20% and 70% from top
+        
+        const firework = document.createElement('div');
+        firework.className = 'firework';
+        firework.style.cssText = `
+            position: absolute;
+            left: ${x}%;
+            top: ${y}%;
+            width: 4px;
+            height: 4px;
+            background: white;
+            border-radius: 50%;
+            animation: fireworkBurst 1s ease-out forwards;
+        `;
+        
+        container.appendChild(firework);
+        
+        // Create particles
+        const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff'];
+        const particleCount = 20;
+        
+        for (let i = 0; i < particleCount; i++) {
+            setTimeout(() => {
+                const particle = document.createElement('div');
+                particle.className = 'firework-particle';
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                const angle = (Math.PI * 2 * i) / particleCount;
+                const distance = 50 + Math.random() * 30;
+                
+                const dx = Math.cos(angle) * distance;
+                const dy = Math.sin(angle) * distance;
+                
+                particle.style.cssText = `
+                    position: absolute;
+                    left: ${x}%;
+                    top: ${y}%;
+                    width: 3px;
+                    height: 3px;
+                    background: ${color};
+                    border-radius: 50%;
+                    box-shadow: 0 0 6px ${color};
+                    animation: fireworkParticle 1.5s ease-out forwards;
+                    --dx: ${dx}px;
+                    --dy: ${dy}px;
+                `;
+                
+                container.appendChild(particle);
+                
+                // Remove particle after animation
+                setTimeout(() => {
+                    if (particle.parentNode) {
+                        particle.parentNode.removeChild(particle);
+                    }
+                }, 1500);
+            }, 100);
+        }
+        
+        // Remove firework after animation
+        setTimeout(() => {
+            if (firework.parentNode) {
+                firework.parentNode.removeChild(firework);
+            }
+        }, 1000);
+    }
+    
+    // Calculate interval and initial count based on density
+    const baseInterval = 800;
+    const interval = Math.max(200, baseInterval * (100 / state.particleDensity)); // Faster with higher density
+    const initialCount = Math.floor(3 * (state.particleDensity / 100));
+    
+    // Clear any existing interval
+    if (fireworksIntervalId) {
+        clearInterval(fireworksIntervalId);
+    }
+    
+    // Create fireworks periodically
+    fireworksIntervalId = setInterval(() => {
+        if (!state.particleEffectsEnabled) {
+            clearInterval(fireworksIntervalId);
+            fireworksIntervalId = null;
+            return;
+        }
+        createFirework();
+    }, interval);
+    
+    // Also create some immediately
+    for (let i = 0; i < initialCount; i++) {
+        setTimeout(() => {
+            if (state.particleEffectsEnabled) {
+                createFirework();
+            }
+        }, i * 500);
     }
 }

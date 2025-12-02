@@ -1,4 +1,5 @@
 #include <SFML/Graphics.hpp>
+#include <SFML/Audio.hpp>
 #include <iostream>
 #include <variant>
 #include <type_traits>
@@ -9,6 +10,8 @@
 #include <memory>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+#include <mutex>
 #include <iomanip>
 #include <ctime>
 #include <thread>
@@ -16,18 +19,20 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include "BongoCat.h"
-#include "KeyboardHook.h"
-#include "MouseHook.h"
-#include "Logger.h"
-#include "CatPackConfig.h"
-#include "CatPackManager.h"
-#include "HatConfig.h"
-#include "HatManager.h"
-#include "CounterEncryption.h"
-#include "BongoStats.h"
-#include "WebViewWindow.h"
-#include "ImageHelper.h"
+#include "core/BongoCat.h"
+#include "input/KeyboardHook.h"
+#include "input/MouseHook.h"
+#include "utils/Logger.h"
+#include "config/CatPackConfig.h"
+#include "managers/CatPackManager.h"
+#include "config/HatConfig.h"
+#include "managers/HatManager.h"
+#include "audio/BonkPackConfig.h"
+#include "audio/BonkPackManager.h"
+#include "utils/CounterEncryption.h"
+#include "core/BongoStats.h"
+#include "ui/WebViewWindow.h"
+#include "utils/ImageHelper.h"
 #include <sstream>
 #include <regex>
 
@@ -35,25 +40,42 @@
 #include <windows.h>
 #include <dbghelp.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <mmsystem.h>
 #pragma comment(lib, "dbghelp.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "winmm.lib")
+
+// Helper function to get AppData folder path
+std::string GetAppDataFolder() {
+    #ifdef _WIN32
+    char appDataPath[MAX_PATH];
+    if (SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appDataPath) == S_OK) {
+        try {
+            std::filesystem::path appDataDir = std::filesystem::path(appDataPath) / "OpenBongo";
+            std::filesystem::create_directories(appDataDir);
+            return appDataDir.string();
+        } catch (...) {
+            // Fallback to current directory if AppData access fails
+            return ".";
+        }
+    }
+    #endif
+    // Fallback for non-Windows or if AppData access fails
+    return ".";
+}
 
 // Global crash handler
 LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* ExceptionInfo) {
-    // Write directly to log file in logs folder (don't use Logger singleton which might be destroyed)
-    std::string crashLogPath = "logs/OpenBongo.log";
+    // Write directly to log file in AppData folder (don't use Logger singleton which might be destroyed)
+    std::string crashLogPath = "OpenBongo.log";
     #ifdef _WIN32
-    // Try to get executable directory
-    char exePath[MAX_PATH];
-    DWORD result = GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    if (result != 0 && result < MAX_PATH) {
         try {
-            std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
-            crashLogPath = (exeDir / "logs" / "OpenBongo.log").string();
+        std::string appDataDir = GetAppDataFolder();
+        crashLogPath = (std::filesystem::path(appDataDir) / "OpenBongo.log").string();
         } catch (...) {
             // Fallback to current directory
-            crashLogPath = "logs/OpenBongo.log";
-        }
+        crashLogPath = "OpenBongo.log";
     }
     #endif
     
@@ -126,6 +148,66 @@ TaskbarInfo GetTaskbarInfo() {
     
     return info;
 }
+
+// Structure to hold both buffer and sound together (buffer must outlive sound)
+struct SoundHolder {
+    sf::SoundBuffer buffer;
+    sf::Sound sound;
+    
+    SoundHolder() : sound(buffer) {}
+};
+
+// Global vector to keep sounds alive until they finish playing
+static std::vector<std::unique_ptr<SoundHolder>> g_activeSounds;
+static std::mutex g_soundsMutex;
+
+// Helper function to play sound file using SFML Audio (supports MP3)
+void PlaySoundFile(const std::string& soundPath, float volume = 100.0f) {
+    if (soundPath.empty()) {
+        return; // No sound to play
+    }
+    
+    // Check if file exists
+    if (!std::filesystem::exists(soundPath)) {
+        LOG_WARNING("Sound file not found: " + soundPath);
+        return;
+    }
+    
+    try {
+        std::lock_guard<std::mutex> lock(g_soundsMutex);
+        
+        // Clean up finished sounds
+        g_activeSounds.erase(
+            std::remove_if(g_activeSounds.begin(), g_activeSounds.end(),
+                [](const std::unique_ptr<SoundHolder>& holder) {
+                    return holder->sound.getStatus() == sf::Sound::Status::Stopped;
+                }),
+            g_activeSounds.end()
+        );
+        
+        // Create sound holder (buffer and sound together)
+        auto holder = std::make_unique<SoundHolder>();
+        
+        // Load sound buffer from file
+        if (!holder->buffer.loadFromFile(soundPath)) {
+            LOG_WARNING("Failed to load sound file: " + soundPath);
+            return;
+        }
+        
+        // Set volume and play (SFML volume is 0-100)
+        holder->sound.setVolume(volume);
+        holder->sound.play();
+        
+        // Keep sound holder alive until it finishes playing
+        g_activeSounds.push_back(std::move(holder));
+        
+        LOG_INFO("Playing sound: " + soundPath + " (volume: " + std::to_string(static_cast<int>(volume)) + "%)");
+    } catch (const std::exception& e) {
+        LOG_ERROR("Exception playing sound: " + std::string(e.what()) + " (file: " + soundPath + ")");
+    } catch (...) {
+        LOG_ERROR("Unknown exception playing sound: " + soundPath);
+    }
+}
 #endif
 
 int main() {
@@ -134,57 +216,23 @@ int main() {
     SetUnhandledExceptionFilter(UnhandledExceptionHandler);
     #endif
     
-    // Get executable directory and create organized folder structure
-    std::string exeDirPath = ""; // Will store executable directory if available
-    std::string logsDirPath = "logs";
-    std::string statsDirPath = "stats";
+    // Get AppData folder for logs and stats
+    std::string exeDirPath = ""; // Will store executable directory if available (for catpacks, etc.)
+    std::string appDataDir = GetAppDataFolder();
+    std::string logsDirPath = appDataDir;
+    std::string statsDirPath = appDataDir;
     
     #ifdef _WIN32
-    // Try to get executable directory
+    // Try to get executable directory for catpacks and other resources
     char exePath[MAX_PATH];
     DWORD result = GetModuleFileNameA(nullptr, exePath, MAX_PATH);
     if (result != 0 && result < MAX_PATH) {
         try {
             std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
             exeDirPath = exeDir.string();
-            logsDirPath = (exeDir / "logs").string();
-            statsDirPath = (exeDir / "stats").string();
-            
-            // Create logs and stats directories if they don't exist
-            std::filesystem::create_directories(logsDirPath);
-            std::filesystem::create_directories(statsDirPath);
         } catch (...) {
-            // If filesystem fails, use current directory
             exeDirPath = "";
-            logsDirPath = "logs";
-            statsDirPath = "stats";
-            try {
-                std::filesystem::create_directories(logsDirPath);
-                std::filesystem::create_directories(statsDirPath);
-            } catch (...) {
-                // If we can't create directories, use current directory
-                logsDirPath = ".";
-                statsDirPath = ".";
-            }
         }
-    } else {
-        // Fallback: try to create directories in current directory
-        try {
-            std::filesystem::create_directories(logsDirPath);
-            std::filesystem::create_directories(statsDirPath);
-        } catch (...) {
-            logsDirPath = ".";
-            statsDirPath = ".";
-        }
-    }
-    #else
-    // For non-Windows, create directories in current directory
-    try {
-        std::filesystem::create_directories(logsDirPath);
-        std::filesystem::create_directories(statsDirPath);
-    } catch (...) {
-        logsDirPath = ".";
-        statsDirPath = ".";
     }
     #endif
     
@@ -218,6 +266,19 @@ int main() {
         ShowWindow(hwndConsole, SW_HIDE);
     }
 #endif
+    
+    // Initialize SFML Audio system early to ensure it's ready
+    // This helps prevent sounds not playing on first run
+    try {
+        // Test audio system by creating a dummy sound buffer
+        // This initializes the audio subsystem
+        sf::SoundBuffer testBuffer;
+        LOG_INFO("SFML Audio system initialized");
+    } catch (const std::exception& e) {
+        LOG_WARNING("SFML Audio initialization warning: " + std::string(e.what()));
+    } catch (...) {
+        LOG_WARNING("SFML Audio initialization warning: unknown error");
+    }
     
     // Create a small, always-on-top window (increased height for UI elements)
     sf::RenderWindow window(sf::VideoMode(sf::Vector2u(200, 260)), "Bongo Cat", 
@@ -269,16 +330,7 @@ int main() {
     
     // Load selected cat pack (default to first one, or load from file)
     std::string selectedCatPackName = availableCatPacks[0].name;
-    std::string catPackConfigPath = "OpenBongo.catpack";
-    #ifdef _WIN32
-    if (!exeDirPath.empty()) {
-        try {
-            catPackConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.catpack").string();
-        } catch (...) {
-            catPackConfigPath = "OpenBongo.catpack";
-        }
-    }
-    #endif
+    std::string catPackConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.catpack").string();
     
     // Load saved cat pack selection
     std::ifstream catPackFile(catPackConfigPath);
@@ -302,16 +354,7 @@ int main() {
     
     // Load selected hat (default to "No Hat", or load from file)
     std::string selectedHatName = "No Hat";
-    std::string hatConfigPath = "OpenBongo.hat";
-    #ifdef _WIN32
-    if (!exeDirPath.empty()) {
-        try {
-            hatConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.hat").string();
-        } catch (...) {
-            hatConfigPath = "OpenBongo.hat";
-        }
-    }
-    #endif
+    std::string hatConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.hat").string();
     
     // Load saved hat selection
     std::ifstream hatFile(hatConfigPath);
@@ -328,19 +371,47 @@ int main() {
         selectedHatName = currentHat.name;
     }
     
+    // Scan for available bonk packs
+    std::vector<BonkPackConfig> availableBonkPacks = BonkPackManager::scanForBonkPacks();
+    if (availableBonkPacks.empty()) {
+        // Add default "None" option
+        availableBonkPacks.push_back(BonkPackManager::getDefaultBonkPack());
+    }
+    
+    // Load selected bonk pack (default to "None", or load from file)
+    std::string selectedBonkPackName = "None";
+    std::string bonkPackConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.bonkpack").string();
+    
+    // Load saved bonk pack selection
+    std::ifstream bonkPackFile(bonkPackConfigPath);
+    if (bonkPackFile.is_open()) {
+        std::getline(bonkPackFile, selectedBonkPackName);
+        bonkPackFile.close();
+    }
+    
+    // Find the selected bonk pack
+    // Handle "No SFX" option specially (it's a UI-only option, not in scanned packs)
+    BonkPackConfig currentBonkPack;
+    if (selectedBonkPackName == "No SFX") {
+        currentBonkPack = BonkPackManager::getDefaultBonkPack();
+        currentBonkPack.name = "No SFX";
+        LOG_INFO("Loaded bonk pack: No SFX (disabled)");
+    } else {
+        currentBonkPack = BonkPackManager::findBonkPackByName(availableBonkPacks, selectedBonkPackName);
+        if (currentBonkPack.name != selectedBonkPackName) {
+            // Selected pack not found, use "None"
+            currentBonkPack = BonkPackManager::getDefaultBonkPack();
+            selectedBonkPackName = currentBonkPack.name;
+        } else {
+            // Log the loaded bonk pack info for debugging
+            LOG_INFO("Loaded bonk pack: " + currentBonkPack.name + ", bonkSound: " + currentBonkPack.bonkSound + ", folderPath: " + currentBonkPack.folderPath);
+        }
+    }
+    
     // Create Bongo Cat with selected pack configuration
     // Load saved cat size or use default
     float catSize = 100.0f;
-    std::string catSizeConfigPath = "OpenBongo.catsize";
-    #ifdef _WIN32
-    if (!exeDirPath.empty()) {
-        try {
-            catSizeConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.catsize").string();
-        } catch (...) {
-            catSizeConfigPath = "OpenBongo.catsize";
-        }
-    }
-    #endif
+    std::string catSizeConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.catsize").string();
     
     // Load saved cat size
     std::ifstream catSizeFile(catSizeConfigPath);
@@ -364,6 +435,87 @@ int main() {
     BongoCat bongoCat(catX, catY, catSize, currentCatPack);
     bongoCat.setWindowHeight(260.0f); // Set window height so hands position at bottom
     bongoCat.setHat(currentHat); // Set initial hat
+    
+    // Load saved UI offset or use default
+    float uiOffset = 0.0f;
+    std::string uiOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.uiyoffset").string();
+    
+    // Load saved UI offset
+    std::ifstream uiOffsetFile(uiOffsetConfigPath);
+    if (uiOffsetFile.is_open()) {
+        std::string offsetStr;
+        std::getline(uiOffsetFile, offsetStr);
+        if (!offsetStr.empty()) {
+            try {
+                uiOffset = std::stof(offsetStr);
+                if (uiOffset < -50.0f) uiOffset = -50.0f;
+                if (uiOffset > 50.0f) uiOffset = 50.0f;
+            } catch (...) {
+                uiOffset = 0.0f;
+            }
+        }
+        uiOffsetFile.close();
+    }
+    
+    // Load saved UI horizontal offset or use default
+    float uiHorizontalOffset = 0.0f;
+    std::string uiHorizontalOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.uixoffset").string();
+    
+    // Load saved UI horizontal offset
+    std::ifstream uiHorizontalOffsetFile(uiHorizontalOffsetConfigPath);
+    if (uiHorizontalOffsetFile.is_open()) {
+        std::string offsetStr;
+        std::getline(uiHorizontalOffsetFile, offsetStr);
+        if (!offsetStr.empty()) {
+            try {
+                uiHorizontalOffset = std::stof(offsetStr);
+                if (uiHorizontalOffset < -50.0f) uiHorizontalOffset = -50.0f;
+                if (uiHorizontalOffset > 50.0f) uiHorizontalOffset = 50.0f;
+            } catch (...) {
+                uiHorizontalOffset = 0.0f;
+            }
+        }
+        uiHorizontalOffsetFile.close();
+    }
+    
+    // Load saved SFX volume or use default
+    float sfxVolume = 100.0f;
+    std::string sfxVolumeConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.sfxvolume").string();
+    
+    // Load saved SFX volume
+    std::ifstream sfxVolumeFile(sfxVolumeConfigPath);
+    if (sfxVolumeFile.is_open()) {
+        std::string volumeStr;
+        std::getline(sfxVolumeFile, volumeStr);
+        if (!volumeStr.empty()) {
+            try {
+                sfxVolume = std::stof(volumeStr);
+                if (sfxVolume < 0.0f) sfxVolume = 0.0f;
+                if (sfxVolume > 100.0f) sfxVolume = 100.0f;
+            } catch (...) {
+                sfxVolume = 100.0f;
+            }
+        }
+        sfxVolumeFile.close();
+    }
+    
+    // Load saved cat flip setting or use default
+    bool catFlipped = false;
+    std::string catFlipConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.catflip").string();
+    
+    // Load saved cat flip setting
+    std::ifstream catFlipFile(catFlipConfigPath);
+    if (catFlipFile.is_open()) {
+        std::string flipStr;
+        std::getline(catFlipFile, flipStr);
+        if (!flipStr.empty()) {
+            catFlipped = (flipStr == "1" || flipStr == "true");
+        }
+        catFlipFile.close();
+    }
+    
+    // Apply initial cat flip
+    bongoCat.setFlip(catFlipped);
     
     // Position window above taskbar on boot
     #ifdef _WIN32
@@ -421,7 +573,7 @@ int main() {
     
     // Initialize keyboard hook with counter and state tracking
     KeyboardHook keyboardHook;
-    bool keyboardHookInitialized = keyboardHook.initialize([&bongoCat, &totalCount, &keyStates](unsigned int keyCode, bool isPressed) {
+    bool keyboardHookInitialized = keyboardHook.initialize([&bongoCat, &totalCount, &keyStates, &currentBonkPack, &sfxVolume](unsigned int keyCode, bool isPressed) {
         try {
             if (isPressed) {
                 // Only trigger if key wasn't already pressed (prevent repeat on hold)
@@ -430,6 +582,29 @@ int main() {
                     totalCount++;
                     BongoStats::getInstance().recordKeyPress(keyCode);
                     bongoCat.punch();
+                    
+                    // Play bonk effect SFX if not "None" or "No SFX"
+                    if (currentBonkPack.name != "None" && currentBonkPack.name != "No SFX") {
+                        if (currentBonkPack.bonkSound.empty()) {
+                            LOG_WARNING("Key pressed but bonkSound is empty for pack: " + currentBonkPack.name);
+                        } else if (currentBonkPack.folderPath.empty()) {
+                            LOG_WARNING("Key pressed but folderPath is empty for pack: " + currentBonkPack.name);
+                        } else {
+                            std::string bonkSoundPath = currentBonkPack.getSoundPath(currentBonkPack.bonkSound);
+                            if (bonkSoundPath.empty()) {
+                                LOG_WARNING("Key pressed but sound path is empty (pack: " + currentBonkPack.name + ", sound: " + currentBonkPack.bonkSound + ", folder: " + currentBonkPack.folderPath + ")");
+                            } else {
+                                // Verify file exists before attempting to play
+                                if (std::filesystem::exists(bonkSoundPath)) {
+                                    LOG_INFO("Key pressed - Playing bonk sound: " + bonkSoundPath);
+                                    PlaySoundFile(bonkSoundPath, sfxVolume);
+                                } else {
+                                    LOG_WARNING("Key pressed but bonk sound file not found: " + bonkSoundPath + " (pack: " + currentBonkPack.name + ", folder: " + currentBonkPack.folderPath + ")");
+                                }
+                            }
+                        }
+                    }
+                    // Don't log for None/No SFX to avoid spam
                 }
             } else {
                 // Key released - reset state
@@ -533,7 +708,8 @@ int main() {
     std::unique_ptr<sf::RectangleShape> menuButtonLine3Ptr;
     
     // UI element positions (below the cat) - centered relative to cat
-    float uiY = bongoCat.getBodyBottomY() + 10.0f; // Position below cat
+    // uiY will be recalculated in the main loop to account for offset
+    float uiY = bongoCat.getBodyBottomY() + 10.0f - uiOffset; // Position below cat with offset (inverted)
     float counterBoxWidth = 84.0f; // 120.0f * 0.7
     float counterBoxHeight = 21.0f; // 30.0f * 0.7
     float menuButtonSize = 21.0f; // 30.0f * 0.7
@@ -541,8 +717,14 @@ int main() {
     float totalUIWidth = counterBoxWidth + spacing + menuButtonSize;
     float windowWidth = 200.0f;
     // Center the UI elements relative to the window (which centers them relative to the cat)
-    float counterBoxX = (windowWidth - totalUIWidth) / 2.0f;
+    // Apply horizontal offset
+    float counterBoxX = (windowWidth - totalUIWidth) / 2.0f + uiHorizontalOffset;
     float menuButtonX = counterBoxX + counterBoxWidth + spacing;
+    
+    // Hamburger menu line dimensions (needed in main loop)
+    float lineWidth = 12.6f; // 18.0f * 0.7
+    float lineHeight = 1.4f; // 2.0f * 0.7
+    float lineSpacing = 2.8f; // 4.0f * 0.7
     
     // Counter box (light grey background)
     counterBoxPtr = std::make_unique<sf::RectangleShape>(sf::Vector2f(counterBoxWidth, counterBoxHeight));
@@ -555,9 +737,6 @@ int main() {
     menuButtonPtr->setFillColor(sf::Color(180, 180, 180)); // Darker grey
     
     // Hamburger menu lines (three horizontal lines)
-    float lineWidth = 12.6f; // 18.0f * 0.7
-    float lineHeight = 1.4f; // 2.0f * 0.7
-    float lineSpacing = 2.8f; // 4.0f * 0.7
     float firstLineY = uiY + (menuButtonSize - (lineHeight * 3 + lineSpacing * 2)) / 2.0f;
     
     menuButtonLine1Ptr = std::make_unique<sf::RectangleShape>(sf::Vector2f(lineWidth, lineHeight));
@@ -578,9 +757,20 @@ int main() {
     
     // Helper function to send JSON message to webview
     auto sendJSONToWebView = [](WebViewWindow& webView, const std::string& type, const std::string& jsonData) {
-        // Create properly formatted JSON message
-        std::string message = "{\"type\":\"" + type + "\",\"data\":" + jsonData + "}";
-        webView.postMessage(message);
+        try {
+            // Check if webview is valid before sending
+            if (!webView.isWindowValid()) {
+                LOG_WARNING("WebView window is invalid, cannot send message: " + type);
+                return;
+            }
+            // Create properly formatted JSON message
+            std::string message = "{\"type\":\"" + type + "\",\"data\":" + jsonData + "}";
+            webView.postMessage(message);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in sendJSONToWebView: " + std::string(e.what()));
+        } catch (...) {
+            LOG_ERROR("Unknown exception in sendJSONToWebView");
+        }
     };
     
     // Helper function to escape JSON string
@@ -606,12 +796,13 @@ int main() {
             // Normalize path separators first
             std::replace(pathStr.begin(), pathStr.end(), '\\', '/');
             
-            // Find catpacks or hats in the path (case-insensitive search)
+            // Find catpacks, hats, bonk-packs, or entity-sfx in the path (case-insensitive search)
             std::string pathLower = pathStr;
             std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), ::tolower);
             
             size_t catpacksPos = pathLower.find("catpacks/");
             size_t hatsPos = pathLower.find("hats/");
+            size_t bonkPacksPos = pathLower.find("bonk-packs/");
             
             std::string relativePath;
             if (catpacksPos != std::string::npos) {
@@ -620,6 +811,9 @@ int main() {
             } else if (hatsPos != std::string::npos) {
                 // Extract from "hats/" onwards
                 relativePath = pathStr.substr(hatsPos);
+            } else if (bonkPacksPos != std::string::npos) {
+                // Extract from "bonk-packs/" onwards
+                relativePath = pathStr.substr(bonkPacksPos);
             } else {
                 // Try to get relative path from current directory
                 try {
@@ -668,7 +862,43 @@ int main() {
         sendJSONToWebView(webView, "catPackList", ss.str());
     };
     
-    // Helper function to send hat list
+    // Helper function to send bonk pack list
+    auto sendBonkPackList = [&sendJSONToWebView, &escapeJSON, &pathToUrl](WebViewWindow& webView, const std::vector<BonkPackConfig>& packs) {
+        try {
+            std::stringstream ss;
+            ss << "[";
+            for (size_t i = 0; i < packs.size(); i++) {
+                if (i > 0) ss << ",";
+                try {
+                    std::string iconPath = packs[i].getImagePath(packs[i].iconImage);
+                    std::string iconUrl = iconPath.empty() ? "" : pathToUrl(iconPath, 18080);
+                    ss << "{\"name\":\"" << escapeJSON(packs[i].name) << "\",\"iconPath\":\"" << escapeJSON(iconUrl) << "\"}";
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Error processing bonk pack at index " + std::to_string(i) + ": " + e.what());
+                    // Skip this pack and continue
+                    continue;
+                } catch (...) {
+                    LOG_ERROR("Unknown error processing bonk pack at index " + std::to_string(i));
+                    continue;
+                }
+            }
+            ss << "]";
+            std::string jsonStr = ss.str();
+            LOG_INFO("Sending bonk pack list: " + jsonStr);
+            sendJSONToWebView(webView, "bonkPackList", jsonStr);
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in sendBonkPackList: " + std::string(e.what()));
+        } catch (...) {
+            LOG_ERROR("Unknown exception in sendBonkPackList");
+        }
+    };
+    
+    auto sendSelectedBonkPack = [&sendJSONToWebView, &escapeJSON](WebViewWindow& webView, const BonkPackConfig& pack) {
+        std::string json = "{\"name\":\"" + escapeJSON(pack.name) + "\"}";
+        LOG_INFO("Sending selected bonk pack: " + json);
+        sendJSONToWebView(webView, "selectedBonkPack", json);
+    };
+    
     auto sendHatList = [&sendJSONToWebView, &escapeJSON, &pathToUrl](WebViewWindow& webView, const std::vector<HatConfig>& hats) {
         std::stringstream ss;
         ss << "[";
@@ -805,6 +1035,12 @@ int main() {
                                     // Set up message handler
                                     settingsWebView->setMessageHandler([&](const std::string& message) {
                                     try {
+                                        // Check if webview is still valid before processing
+                                        if (!settingsWebView || !settingsWebView->isWindowValid()) {
+                                            LOG_WARNING("WebView is invalid, ignoring message");
+                                            return;
+                                        }
+                                        
                                         LOG_INFO("Received message from webview: " + message);
                                         auto parsed = parseMessage(message);
                                         std::string type = parsed["type"];
@@ -816,12 +1052,18 @@ int main() {
                                         } else if (type == "getHats") {
                                             LOG_INFO("Sending hats list");
                                             sendHatList(*settingsWebView, availableHats);
+                                        } else if (type == "getBonkPacks") {
+                                            LOG_INFO("Sending bonk packs list");
+                                            sendBonkPackList(*settingsWebView, availableBonkPacks);
                                         } else if (type == "getSelectedCatPack") {
                                             LOG_INFO("Sending selected cat pack");
                                             sendSelectedCatPack(*settingsWebView, currentCatPack);
                                         } else if (type == "getSelectedHat") {
                                             LOG_INFO("Sending selected hat");
                                             sendSelectedHat(*settingsWebView, currentHat);
+                                        } else if (type == "getSelectedBonkPack") {
+                                            LOG_INFO("Sending selected bonk pack");
+                                            sendSelectedBonkPack(*settingsWebView, currentBonkPack);
                                         } else if (type == "selectCatPack") {
                                             std::string packName = parsed["name"];
                                             CatPackConfig newCatPack = CatPackManager::findCatPackByName(availableCatPacks, packName);
@@ -857,6 +1099,78 @@ int main() {
                                                 }
                                                 
                                                 sendSelectedHat(*settingsWebView, currentHat);
+                                            }
+                                        } else if (type == "selectBonkPack") {
+                                            std::string packName = parsed["name"];
+                                            // Handle "No SFX" option
+                                            if (packName == "No SFX") {
+                                                selectedBonkPackName = "No SFX";
+                                                currentBonkPack = BonkPackManager::getDefaultBonkPack();
+                                                currentBonkPack.name = "No SFX";
+                                                
+                                                LOG_INFO("Bonk pack selected: No SFX (disabled)");
+                                                
+                                                // Save selection to AppData
+                                                std::ofstream bonkPackOutFile(bonkPackConfigPath);
+                                                if (bonkPackOutFile.is_open()) {
+                                                    bonkPackOutFile << selectedBonkPackName;
+                                                    bonkPackOutFile.close();
+                                                    LOG_INFO("Bonk pack selection saved to: " + bonkPackConfigPath);
+                                                } else {
+                                                    LOG_ERROR("Failed to save bonk pack selection to: " + bonkPackConfigPath);
+                                                }
+                                                
+                                                sendSelectedBonkPack(*settingsWebView, currentBonkPack);
+                                            } else {
+                                                BonkPackConfig newBonkPack = BonkPackManager::findBonkPackByName(availableBonkPacks, packName);
+                                                if (newBonkPack.name == packName) {
+                                                    selectedBonkPackName = packName;
+                                                    currentBonkPack = newBonkPack;
+                                                    
+                                                    LOG_INFO("Bonk pack selected: " + packName + ", bonkSound: " + currentBonkPack.bonkSound + ", folderPath: " + currentBonkPack.folderPath);
+                                                    
+                                                    // Verify the sound file exists
+                                                    if (currentBonkPack.bonkSound.empty()) {
+                                                        LOG_WARNING("Bonk sound filename is empty for pack: " + packName);
+                                                    } else if (currentBonkPack.folderPath.empty()) {
+                                                        LOG_WARNING("Folder path is empty for pack: " + packName);
+                                                    } else {
+                                                        std::string testSoundPath = currentBonkPack.getSoundPath(currentBonkPack.bonkSound);
+                                                        LOG_INFO("Constructed sound path: " + testSoundPath);
+                                                        if (std::filesystem::exists(testSoundPath)) {
+                                                            LOG_INFO("Bonk sound file verified and exists: " + testSoundPath);
+                                                        } else {
+                                                            LOG_WARNING("Bonk sound file NOT FOUND: " + testSoundPath);
+                                                            // Try to list directory contents for debugging
+                                                            try {
+                                                                if (std::filesystem::exists(currentBonkPack.folderPath)) {
+                                                                    LOG_INFO("Folder exists, listing contents:");
+                                                                    for (const auto& entry : std::filesystem::directory_iterator(currentBonkPack.folderPath)) {
+                                                                        LOG_INFO("  - " + entry.path().filename().string());
+                                                                    }
+                                                                } else {
+                                                                    LOG_WARNING("Folder does not exist: " + currentBonkPack.folderPath);
+                                                                }
+                                                            } catch (const std::exception& e) {
+                                                                LOG_ERROR("Error listing folder contents: " + std::string(e.what()));
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    // Save selection to AppData
+                                                    std::ofstream bonkPackOutFile(bonkPackConfigPath);
+                                                    if (bonkPackOutFile.is_open()) {
+                                                        bonkPackOutFile << selectedBonkPackName;
+                                                        bonkPackOutFile.close();
+                                                        LOG_INFO("Bonk pack selection saved to: " + bonkPackConfigPath);
+                                                    } else {
+                                                        LOG_ERROR("Failed to save bonk pack selection to: " + bonkPackConfigPath);
+                                                    }
+                                                    
+                                                    sendSelectedBonkPack(*settingsWebView, currentBonkPack);
+                                                } else {
+                                                    LOG_WARNING("Bonk pack not found: " + packName);
+                                                }
                                             }
                                         } else if (type == "setCatSize") {
                                             // Extract size from message
@@ -924,16 +1238,7 @@ int main() {
                                                 LOG_INFO("Accent color changed to: " + color);
                                                 
                                                 // Save accent color to file
-                                                std::string accentColorConfigPath = "OpenBongo.accentcolor";
-                                                #ifdef _WIN32
-                                                if (!exeDirPath.empty()) {
-                                                    try {
-                                                        accentColorConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.accentcolor").string();
-                                                    } catch (...) {
-                                                        accentColorConfigPath = "OpenBongo.accentcolor";
-                                                    }
-                                                }
-                                                #endif
+                                                std::string accentColorConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.accentcolor").string();
                                                 
                                                 std::ofstream accentColorOutFile(accentColorConfigPath);
                                                 if (accentColorOutFile.is_open()) {
@@ -942,6 +1247,94 @@ int main() {
                                                     LOG_INFO("Accent color saved: " + color);
                                                 }
                                             }
+                                        } else if (type == "setUIOffset") {
+                                            // Extract offset from message
+                                            std::regex offsetRegex("\"offset\"\\s*:\\s*(-?\\d+)");
+                                            std::smatch offsetMatch;
+                                            if (std::regex_search(message, offsetMatch, offsetRegex)) {
+                                                try {
+                                                    float newOffset = std::stof(offsetMatch[1].str());
+                                                    if (newOffset >= -50.0f && newOffset <= 50.0f) {
+                                                        uiOffset = newOffset;
+                                                        
+                                                        // Save UI offset to file
+                                                        std::ofstream uiOffsetOutFile(uiOffsetConfigPath);
+                                                        if (uiOffsetOutFile.is_open()) {
+                                                            uiOffsetOutFile << uiOffset;
+                                                            uiOffsetOutFile.close();
+                                                            LOG_INFO("UI offset saved: " + std::to_string(uiOffset));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse UI offset");
+                                                }
+                                            }
+                                        } else if (type == "setUIHorizontalOffset") {
+                                            // Extract horizontal offset from message
+                                            std::regex offsetRegex("\"offset\"\\s*:\\s*(-?\\d+)");
+                                            std::smatch offsetMatch;
+                                            if (std::regex_search(message, offsetMatch, offsetRegex)) {
+                                                try {
+                                                    float newOffset = std::stof(offsetMatch[1].str());
+                                                    if (newOffset >= -50.0f && newOffset <= 50.0f) {
+                                                        uiHorizontalOffset = newOffset;
+                                                        
+                                                        // Save UI horizontal offset to file
+                                                        std::ofstream uiHorizontalOffsetOutFile(uiHorizontalOffsetConfigPath);
+                                                        if (uiHorizontalOffsetOutFile.is_open()) {
+                                                            uiHorizontalOffsetOutFile << uiHorizontalOffset;
+                                                            uiHorizontalOffsetOutFile.close();
+                                                            LOG_INFO("UI horizontal offset saved: " + std::to_string(uiHorizontalOffset));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse UI horizontal offset");
+                                                }
+                                            }
+                                        } else if (type == "setSFXVolume") {
+                                            // Extract volume from message
+                                            std::regex volumeRegex("\"volume\"\\s*:\\s*(\\d+)");
+                                            std::smatch volumeMatch;
+                                            if (std::regex_search(message, volumeMatch, volumeRegex)) {
+                                                try {
+                                                    float newVolume = std::stof(volumeMatch[1].str());
+                                                    if (newVolume >= 0.0f && newVolume <= 100.0f) {
+                                                        sfxVolume = newVolume;
+                                                        
+                                                        // Save SFX volume to file
+                                                        std::ofstream sfxVolumeOutFile(sfxVolumeConfigPath);
+                                                        if (sfxVolumeOutFile.is_open()) {
+                                                            sfxVolumeOutFile << sfxVolume;
+                                                            sfxVolumeOutFile.close();
+                                                            LOG_INFO("SFX volume saved: " + std::to_string(sfxVolume));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse SFX volume");
+                                                }
+                                            }
+                                        } else if (type == "setCatFlip") {
+                                            // Extract flipped state from message
+                                            std::regex flipRegex("\"flipped\"\\s*:\\s*(true|false)");
+                                            std::smatch flipMatch;
+                                            if (std::regex_search(message, flipMatch, flipRegex)) {
+                                                bool newFlipped = (flipMatch[1].str() == "true");
+                                                catFlipped = newFlipped;
+                                                bongoCat.setFlip(catFlipped);
+                                                LOG_INFO("Cat flip changed to: " + std::string(catFlipped ? "true" : "false"));
+                                                
+                                                // Save cat flip to file
+                                                std::ofstream catFlipOutFile(catFlipConfigPath);
+                                                if (catFlipOutFile.is_open()) {
+                                                    catFlipOutFile << (catFlipped ? "1" : "0");
+                                                    catFlipOutFile.close();
+                                                    LOG_INFO("Cat flip saved: " + std::string(catFlipped ? "true" : "false"));
+                                                }
+                                            }
+                                        } else if (type == "shutdown") {
+                                            // Shutdown the entire program
+                                            LOG_INFO("Shutdown requested from UI");
+                                            window.close();
                                         } else if (type == "hideWindow") {
                                             // Hide the window instead of closing it
                                             if (settingsWebView && settingsWebView->isWindowValid()) {
@@ -1000,24 +1393,37 @@ int main() {
                                     LOG_INFO("Sending initial data to webview");
                                     sendCatPackList(*settingsWebView, availableCatPacks);
                                     sendHatList(*settingsWebView, availableHats);
+                                    sendBonkPackList(*settingsWebView, availableBonkPacks);
                                     sendSelectedCatPack(*settingsWebView, currentCatPack);
                                     sendSelectedHat(*settingsWebView, currentHat);
+                                    sendSelectedBonkPack(*settingsWebView, currentBonkPack);
+                                    
+                                    // Also send bonk packs again after a short delay to ensure they're received
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                                    sendBonkPackList(*settingsWebView, availableBonkPacks);
                                     
                                     // Send initial cat size
                                     std::string catSizeJson = "{\"size\":" + std::to_string(static_cast<int>(catSize)) + "}";
                                     sendJSONToWebView(*settingsWebView, "catSize", catSizeJson);
                                     
+                                    // Send initial UI offset
+                                    std::string uiOffsetJson = "{\"offset\":" + std::to_string(static_cast<int>(uiOffset)) + "}";
+                                    sendJSONToWebView(*settingsWebView, "uiOffset", uiOffsetJson);
+                                    
+                                    // Send initial UI horizontal offset
+                                    std::string uiHorizontalOffsetJson = "{\"offset\":" + std::to_string(static_cast<int>(uiHorizontalOffset)) + "}";
+                                    sendJSONToWebView(*settingsWebView, "uiHorizontalOffset", uiHorizontalOffsetJson);
+                                    
+                                    // Send initial SFX volume
+                                    std::string sfxVolumeJson = "{\"volume\":" + std::to_string(static_cast<int>(sfxVolume)) + "}";
+                                    sendJSONToWebView(*settingsWebView, "sfxVolume", sfxVolumeJson);
+                                    
+                                    // Send initial cat flip
+                                    std::string catFlipJson = "{\"flipped\":" + std::string(catFlipped ? "true" : "false") + "}";
+                                    sendJSONToWebView(*settingsWebView, "catFlip", catFlipJson);
+                                    
                                     // Load and send initial accent color
-                                    std::string accentColorConfigPath = "OpenBongo.accentcolor";
-                                    #ifdef _WIN32
-                                    if (!exeDirPath.empty()) {
-                                        try {
-                                            accentColorConfigPath = (std::filesystem::path(exeDirPath) / "OpenBongo.accentcolor").string();
-                                        } catch (...) {
-                                            accentColorConfigPath = "OpenBongo.accentcolor";
-                                        }
-                                    }
-                                    #endif
+                                    std::string accentColorConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.accentcolor").string();
                                     
                                     std::string accentColor = "#4a90e2"; // Default blue
                                     std::ifstream accentColorFile(accentColorConfigPath);
@@ -1149,6 +1555,49 @@ int main() {
             }
         }
         #endif
+        
+        // Recalculate UI Y position with offset (inverted: negative moves up, positive moves down)
+        float currentUIY = bongoCat.getBodyBottomY() + 10.0f - uiOffset;
+        
+        // Recalculate UI X positions with horizontal offset
+        float currentCounterBoxX = (windowWidth - totalUIWidth) / 2.0f + uiHorizontalOffset;
+        float currentMenuButtonX = currentCounterBoxX + counterBoxWidth + spacing;
+        
+        // Update UI element positions if they changed
+        bool uiPositionChanged = false;
+        if (std::abs(currentUIY - uiY) > 0.01f) {
+            uiY = currentUIY;
+            uiPositionChanged = true;
+        }
+        if (std::abs(currentCounterBoxX - counterBoxX) > 0.01f) {
+            counterBoxX = currentCounterBoxX;
+            menuButtonX = currentMenuButtonX;
+            uiPositionChanged = true;
+        }
+        
+        if (uiPositionChanged) {
+            // Update counter box position
+            if (counterBoxPtr) {
+                counterBoxPtr->setPosition(sf::Vector2f(counterBoxX, uiY));
+            }
+            
+            // Update menu button position
+            if (menuButtonPtr) {
+                menuButtonPtr->setPosition(sf::Vector2f(menuButtonX, uiY));
+            }
+            
+            // Update hamburger menu lines position
+            float firstLineY = uiY + (menuButtonSize - (lineHeight * 3 + lineSpacing * 2)) / 2.0f;
+            if (menuButtonLine1Ptr) {
+                menuButtonLine1Ptr->setPosition(sf::Vector2f(menuButtonX + (menuButtonSize - lineWidth) / 2.0f, firstLineY));
+            }
+            if (menuButtonLine2Ptr) {
+                menuButtonLine2Ptr->setPosition(sf::Vector2f(menuButtonX + (menuButtonSize - lineWidth) / 2.0f, firstLineY + lineHeight + lineSpacing));
+            }
+            if (menuButtonLine3Ptr) {
+                menuButtonLine3Ptr->setPosition(sf::Vector2f(menuButtonX + (menuButtonSize - lineWidth) / 2.0f, firstLineY + (lineHeight + lineSpacing) * 2));
+            }
+        }
         
         // Update counter text with space formatting (e.g., "4 309")
         try {

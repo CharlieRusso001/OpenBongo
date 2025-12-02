@@ -1,4 +1,4 @@
-#include "HatConfig.h"
+#include "config/CatPackConfig.h"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -8,7 +8,7 @@
 #include <windows.h>
 #endif
 
-bool HatConfig::loadFromFile(const std::string& configPath, HatConfig& config) {
+bool CatPackConfig::loadFromFile(const std::string& configPath, CatPackConfig& config) {
     std::ifstream file(configPath);
     if (!file.is_open()) {
         return false;
@@ -57,31 +57,58 @@ bool HatConfig::loadFromFile(const std::string& configPath, HatConfig& config) {
         if (keyLower == "name") {
             config.name = value;
         }
-        else if (keyLower == "hatimage" || keyLower == "hat_image") {
-            config.hatImage = value;
+        else if (keyLower == "bodyimage" || keyLower == "body_image") {
+            config.bodyImage = value;
+        }
+        else if (keyLower == "handupimage" || keyLower == "hand_up_image") {
+            config.handUpImage = value;
+        }
+        else if (keyLower == "handdownimage" || keyLower == "hand_down_image") {
+            config.handDownImage = value;
         }
         else if (keyLower == "iconimage" || keyLower == "icon_image") {
             config.iconImage = value;
         }
-        else if (keyLower == "offsetx" || keyLower == "offset_x") {
-            config.offsetX = std::stof(value);
+        else if (keyLower == "bodyoffsetx" || keyLower == "body_offset_x") {
+            config.bodyOffsetX = std::stof(value);
         }
-        else if (keyLower == "offsety" || keyLower == "offset_y") {
-            config.offsetY = std::stof(value);
+        else if (keyLower == "bodyoffsety" || keyLower == "body_offset_y") {
+            config.bodyOffsetY = std::stof(value);
         }
-        else if (keyLower == "scalex" || keyLower == "scale_x") {
-            config.scaleX = std::stof(value);
+        else if (keyLower == "leftarmoffsetx" || keyLower == "left_arm_offset_x") {
+            config.leftArmOffsetX = std::stof(value);
         }
-        else if (keyLower == "scaley" || keyLower == "scale_y") {
-            config.scaleY = std::stof(value);
+        else if (keyLower == "leftarmoffsety" || keyLower == "left_arm_offset_y") {
+            config.leftArmOffsetY = std::stof(value);
+        }
+        else if (keyLower == "rightarmoffsetx" || keyLower == "right_arm_offset_x") {
+            config.rightArmOffsetX = std::stof(value);
+        }
+        else if (keyLower == "rightarmoffsety" || keyLower == "right_arm_offset_y") {
+            config.rightArmOffsetY = std::stof(value);
+        }
+        else if (keyLower == "leftarmspacing" || keyLower == "left_arm_spacing") {
+            config.leftArmSpacing = std::stof(value);
+        }
+        else if (keyLower == "rightarmspacing" || keyLower == "right_arm_spacing") {
+            config.rightArmSpacing = std::stof(value);
+        }
+        else if (keyLower == "punchoffsety" || keyLower == "punch_offset_y") {
+            config.punchOffsetY = std::stof(value);
+        }
+        else if (keyLower == "handdownoffsety" || keyLower == "hand_down_offset_y") {
+            config.handDownOffsetY = std::stof(value);
+        }
+        else if (keyLower == "weight") {
+            config.weight = std::stof(value);
         }
     }
     
     file.close();
-    return !config.name.empty() && !config.hatImage.empty();
+    return !config.name.empty() && !config.bodyImage.empty();
 }
 
-std::string HatConfig::getImagePath(const std::string& imageName) const {
+std::string CatPackConfig::getImagePath(const std::string& imageName) const {
     if (imageName.empty()) return "";
     
     std::filesystem::path folder(folderPath);

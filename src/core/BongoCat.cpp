@@ -1,4 +1,5 @@
-#include "BongoCat.h"
+#include "core/BongoCat.h"
+#include "utils/Logger.h"
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -88,15 +89,11 @@ bool BongoCat::loadTextures() {
         std::string handUpPath = config.getImagePath(config.handUpImage);
         std::string handDownPath = config.getImagePath(config.handDownImage);
         
-        // Write debug info to log file
-        std::ofstream logFile("OpenBongo.log", std::ios::app);
-        if (logFile.is_open()) {
-            logFile << "[BongoCat] Loading from config: " << config.name << std::endl;
-            logFile << "  Body: " << bodyPath << std::endl;
-            logFile << "  HandUp: " << handUpPath << std::endl;
-            logFile << "  HandDown: " << handDownPath << std::endl;
-            logFile.close();
-        }
+        // Write debug info to log
+        LOG_INFO("[BongoCat] Loading from config: " + config.name);
+        LOG_INFO("  Body: " + bodyPath);
+        LOG_INFO("  HandUp: " + handUpPath);
+        LOG_INFO("  HandDown: " + handDownPath);
         
         if (bodyTexture.loadFromFile(bodyPath) &&
             handUpTexture.loadFromFile(handUpPath) &&
@@ -126,7 +123,6 @@ bool BongoCat::loadTextures() {
         }
         #endif
         
-        std::ofstream logFile("OpenBongo.log", std::ios::app);
         for (const std::string& basePath : basePaths) {
             std::string bodyPath = basePath + "body-devartcat.png";
             std::string handUpPath = basePath + "handup-devartcat.png";
@@ -135,18 +131,14 @@ bool BongoCat::loadTextures() {
             if (bodyTexture.loadFromFile(bodyPath) &&
                 handUpTexture.loadFromFile(handUpPath) &&
                 handDownTexture.loadFromFile(handDownPath)) {
-                if (logFile.is_open()) {
-                    logFile << "[BongoCat] Successfully loaded default cat images from: " << basePath << std::endl;
-                    logFile.close();
-                }
+                LOG_INFO("[BongoCat] Successfully loaded default cat images from: " + basePath);
                 loaded = true;
                 break;
             }
         }
         
-        if (!loaded && logFile.is_open()) {
-            logFile << "[BongoCat] ERROR: Failed to load textures" << std::endl;
-            logFile.close();
+        if (!loaded) {
+            LOG_ERROR("[BongoCat] ERROR: Failed to load textures");
         }
     }
     
@@ -189,12 +181,20 @@ bool BongoCat::loadTextures() {
         leftArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
         rightArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
         
+        // Set origin to center horizontally and bottom vertically so arms flip around their center
+        leftArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+        rightArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+        
         leftArmSprite->setScale(leftArmScale);
         rightArmSprite->setScale(rightArmScale);
     } else {
         // Create sprites with hand up texture even if size is 0
         leftArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
         rightArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
+        if (handTexSize.x > 0 && handTexSize.y > 0) {
+            leftArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+            rightArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+        }
     }
     
     return true;
@@ -203,7 +203,7 @@ bool BongoCat::loadTextures() {
 BongoCat::BongoCat(float x, float y, float size, const CatPackConfig& config)
     : position(x, y), size(size), config(config), hatConfig(), isPunching(false), punchTimer(0.0f), punchDuration(0.15f),
       armWidth(size * 0.3f * 1.5f), armHeight(size * 0.4f * 1.5f), usingHandDownTexture(false), bodyDisplayHeight(size), windowHeight(200.0f),
-      leftArmActive(true), punchCount(0) {
+      leftArmActive(true), punchCount(0), isFlipped(false) {
     
     // Load textures
     bool texturesLoaded = loadTextures();
@@ -215,6 +215,7 @@ BongoCat::BongoCat(float x, float y, float size, const CatPackConfig& config)
     recalculatePositions();
     updateArmPositions();
     loadHatTexture(); // Load hat (will be empty/no hat by default)
+    applyFlip(); // Apply initial flip state
 }
 
 void BongoCat::setConfig(const CatPackConfig& newConfig) {
@@ -224,12 +225,14 @@ void BongoCat::setConfig(const CatPackConfig& newConfig) {
         recalculatePositions();
         updateArmPositions();
         updateHatPosition(); // Update hat position when body changes
+        applyFlip(); // Reapply flip after reloading textures
     }
 }
 
 void BongoCat::setHat(const HatConfig& hat) {
     hatConfig = hat;
     loadHatTexture();
+    applyFlip(); // Reapply flip after loading hat
 }
 
 void BongoCat::setSize(float newSize) {
@@ -247,6 +250,56 @@ void BongoCat::setSize(float newSize) {
         recalculatePositions();
         updateArmPositions();
         updateHatPosition();
+        applyFlip(); // Reapply flip after reloading textures
+    }
+}
+
+void BongoCat::setFlip(bool flipped) {
+    isFlipped = flipped;
+    recalculatePositions(); // Recalculate positions to swap left/right when flipped
+    applyFlip();
+}
+
+void BongoCat::applyFlip() {
+    if (!bodySprite) return;
+    
+    // Get current scale
+    sf::Vector2f currentScale = bodySprite->getScale();
+    
+    // Apply horizontal flip by negating X scale
+    if (isFlipped) {
+        bodySprite->setScale(sf::Vector2f(-std::abs(currentScale.x), currentScale.y));
+    } else {
+        bodySprite->setScale(sf::Vector2f(std::abs(currentScale.x), currentScale.y));
+    }
+    
+    // Also flip arms
+    if (leftArmSprite) {
+        sf::Vector2f leftScale = leftArmSprite->getScale();
+        if (isFlipped) {
+            leftArmSprite->setScale(sf::Vector2f(-std::abs(leftScale.x), leftScale.y));
+        } else {
+            leftArmSprite->setScale(sf::Vector2f(std::abs(leftScale.x), leftScale.y));
+        }
+    }
+    
+    if (rightArmSprite) {
+        sf::Vector2f rightScale = rightArmSprite->getScale();
+        if (isFlipped) {
+            rightArmSprite->setScale(sf::Vector2f(-std::abs(rightScale.x), rightScale.y));
+        } else {
+            rightArmSprite->setScale(sf::Vector2f(std::abs(rightScale.x), rightScale.y));
+        }
+    }
+    
+    // Also flip hat
+    if (hatSprite) {
+        sf::Vector2f hatScale = hatSprite->getScale();
+        if (isFlipped) {
+            hatSprite->setScale(sf::Vector2f(-std::abs(hatScale.x), hatScale.y));
+        } else {
+            hatSprite->setScale(sf::Vector2f(std::abs(hatScale.x), hatScale.y));
+        }
     }
 }
 
@@ -270,11 +323,33 @@ void BongoCat::recalculatePositions() {
     
     // Position arms so bottom of hand images aligns with bottom of body image
     float bodyBottomY = bodyY + bodyDisplayHeight;
-    float handY = bodyBottomY - armHeight; // Position hands so their bottom aligns with body bottom
+    float handY = bodyBottomY; // Position hands at body bottom (origin is at bottom center of arm sprite)
     
-    // Apply config offsets and spacing multipliers
-    float leftArmX = bodyX - armWidth * 0.3f * config.leftArmSpacing + config.leftArmOffsetX;
-    float rightArmX = bodyX + bodyDisplayWidth - armWidth * 0.35f * config.rightArmSpacing + config.rightArmOffsetX;
+    // Calculate body center for mirroring when flipped
+    float bodyCenterX = bodyX + bodyDisplayWidth / 2.0f;
+    
+    // Calculate original arm positions (relative to body left edge, like original code)
+    // Original code positioned arms assuming origin at (0,0), but now origin is at center
+    // So we need to adjust: original position was for left edge, now we position center
+    float leftArmXOriginal = bodyX - armWidth * 0.3f * config.leftArmSpacing + config.leftArmOffsetX;
+    float rightArmXOriginal = bodyX + bodyDisplayWidth - armWidth * 0.35f * config.rightArmSpacing + config.rightArmOffsetX;
+    
+    // Adjust for center origin: add half width to left, subtract half width from right
+    // This positions the center of the sprite where the left edge was originally
+    leftArmXOriginal += armWidth / 2.0f;
+    rightArmXOriginal -= armWidth / 2.0f;
+    
+    // When flipped, mirror the positions around the body center
+    float leftArmX, rightArmX;
+    if (isFlipped) {
+        // Mirror positions: distance from center becomes negative distance from center
+        // This swaps left and right while maintaining the same spacing
+        leftArmX = 2.0f * bodyCenterX - rightArmXOriginal;
+        rightArmX = 2.0f * bodyCenterX - leftArmXOriginal;
+    } else {
+        leftArmX = leftArmXOriginal;
+        rightArmX = rightArmXOriginal;
+    }
     
     leftArmRestPos = sf::Vector2f(leftArmX, handY + config.leftArmOffsetY);
     rightArmRestPos = sf::Vector2f(rightArmX, handY + config.rightArmOffsetY);
@@ -391,31 +466,54 @@ void BongoCat::updateArmPositions() {
         
         // Use hand down texture for the active arm when punching
         if (leftArmSprite && rightArmSprite) {
+            sf::Vector2u handUpTexSize = handUpTexture.getSize();
+            sf::Vector2u handDownTexSize = handDownTexture.getSize();
             if (leftArmActive) {
                 // Left arm is active - update left arm texture to hand down
                 leftArmSprite = std::make_unique<sf::Sprite>(handDownTexture);
+                if (handDownTexSize.x > 0 && handDownTexSize.y > 0) {
+                    leftArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handDownTexSize.x) / 2.0f, static_cast<float>(handDownTexSize.y)));
+                }
                 leftArmSprite->setScale(leftArmScale);
                 // Right arm stays with hand up texture
                 rightArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
+                if (handUpTexSize.x > 0 && handUpTexSize.y > 0) {
+                    rightArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handUpTexSize.x) / 2.0f, static_cast<float>(handUpTexSize.y)));
+                }
                 rightArmSprite->setScale(rightArmScale);
             } else {
                 // Right arm is active - update right arm texture to hand down
                 rightArmSprite = std::make_unique<sf::Sprite>(handDownTexture);
+                if (handDownTexSize.x > 0 && handDownTexSize.y > 0) {
+                    rightArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handDownTexSize.x) / 2.0f, static_cast<float>(handDownTexSize.y)));
+                }
                 rightArmSprite->setScale(rightArmScale);
                 // Left arm stays with hand up texture
                 leftArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
+                if (handUpTexSize.x > 0 && handUpTexSize.y > 0) {
+                    leftArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handUpTexSize.x) / 2.0f, static_cast<float>(handUpTexSize.y)));
+                }
                 leftArmSprite->setScale(leftArmScale);
             }
             usingHandDownTexture = true;
+            // Reapply flip after recreating sprites
+            applyFlip();
         }
     } else {
         // Use hand up texture for both arms when idle
         if (leftArmSprite && rightArmSprite && usingHandDownTexture) {
+            sf::Vector2u handTexSize = handUpTexture.getSize();
             leftArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
             rightArmSprite = std::make_unique<sf::Sprite>(handUpTexture);
+            if (handTexSize.x > 0 && handTexSize.y > 0) {
+                leftArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+                rightArmSprite->setOrigin(sf::Vector2f(static_cast<float>(handTexSize.x) / 2.0f, static_cast<float>(handTexSize.y)));
+            }
             leftArmSprite->setScale(leftArmScale);
             rightArmSprite->setScale(rightArmScale);
             usingHandDownTexture = false;
+            // Reapply flip after recreating sprites
+            applyFlip();
         }
     }
     
@@ -429,6 +527,15 @@ void BongoCat::updateArmPositions() {
         rightArmRestPos.x + (rightArmPunchPos.x - rightArmRestPos.x) * rightProgress,
         rightArmRestPos.y + (rightArmPunchPos.y - rightArmRestPos.y) * rightProgress
     );
+    
+    // Apply hand down offset when using hand down texture
+    if (usingHandDownTexture) {
+        if (leftArmActive) {
+            leftPos.y += config.handDownOffsetY;
+        } else {
+            rightPos.y += config.handDownOffsetY;
+        }
+    }
     
     if (leftArmSprite) {
         leftArmSprite->setPosition(leftPos);

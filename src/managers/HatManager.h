@@ -1,6 +1,6 @@
 #pragma once
 
-#include "HatConfig.h"
+#include "config/HatConfig.h"
 #include <vector>
 #include <string>
 

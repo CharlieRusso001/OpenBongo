@@ -1,4 +1,4 @@
-#include "KeyboardHook.h"
+#include "input/KeyboardHook.h"
 
 #ifdef _WIN32
 #include "platform/WindowsKeyboardHook.h"

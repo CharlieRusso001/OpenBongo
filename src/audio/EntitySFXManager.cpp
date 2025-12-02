@@ -1,17 +1,18 @@
-#include "HatManager.h"
+#include "audio/EntitySFXManager.h"
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <algorithm>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-std::vector<HatConfig> HatManager::scanForHats(const std::string& basePath) {
-    std::vector<HatConfig> hats;
-    std::set<std::string> seenPaths; // Track folder paths to avoid duplicates
+std::vector<EntitySFXConfig> EntitySFXManager::scanForEntitySFX(const std::string& basePath) {
+    std::vector<EntitySFXConfig> sfxList;
+    std::set<std::string> seenPaths;
     
-    // Try to find hats directory - check multiple possible locations
+    // Try to find entity-sfx directory - check multiple possible locations
     std::vector<std::filesystem::path> searchPaths;
     
     // Current directory
@@ -46,19 +47,18 @@ std::vector<HatConfig> HatManager::scanForHats(const std::string& basePath) {
                     }
                     seenPaths.insert(folderPath);
                     
-                    std::string folderName = entry.path().filename().string();
                     std::string configPath = (entry.path() / "config.txt").string();
                     
                     // Try to load config
-                    HatConfig config;
-                    if (HatConfig::loadFromFile(configPath, config)) {
+                    EntitySFXConfig config;
+                    if (EntitySFXConfig::loadFromFile(configPath, config)) {
                         // Ensure folderPath is set to canonical path
                         try {
                             config.folderPath = std::filesystem::canonical(entry.path()).string();
                         } catch (...) {
                             config.folderPath = entry.path().string();
                         }
-                        hats.push_back(config);
+                        sfxList.push_back(config);
                     }
                 }
             }
@@ -68,24 +68,33 @@ std::vector<HatConfig> HatManager::scanForHats(const std::string& basePath) {
         }
     }
     
-    return hats;
+    // Sort by weight (descending), then by name (ascending) for stable ordering
+    std::sort(sfxList.begin(), sfxList.end(), [](const EntitySFXConfig& a, const EntitySFXConfig& b) {
+        if (a.weight != b.weight) {
+            return a.weight > b.weight; // Higher weight first
+        }
+        return a.name < b.name; // Fallback: alphabetical
+    });
+    
+    return sfxList;
 }
 
-HatConfig HatManager::getNoHat() {
-    HatConfig config;
-    config.name = "No Hat";
-    config.hatImage = "";
+EntitySFXConfig EntitySFXManager::getDefaultEntitySFX() {
+    EntitySFXConfig config;
+    config.name = "None";
+    config.entitySound = "";
     config.iconImage = "";
+    config.volume = 100.0f;
     return config;
 }
 
-HatConfig HatManager::findHatByName(const std::vector<HatConfig>& hats, const std::string& name) {
-    for (const auto& hat : hats) {
-        if (hat.name == name) {
-            return hat;
+EntitySFXConfig EntitySFXManager::findEntitySFXByName(const std::vector<EntitySFXConfig>& sfx, const std::string& name) {
+    for (const auto& item : sfx) {
+        if (item.name == name) {
+            return item;
         }
     }
-    // Return "no hat" if not found
-    return getNoHat();
+    // Return default if not found
+    return getDefaultEntitySFX();
 }
 

@@ -1,4 +1,4 @@
-#include "MouseHook.h"
+#include "input/MouseHook.h"
 
 #ifdef _WIN32
 #include "platform/WindowsMouseHook.h"

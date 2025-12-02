@@ -1,5 +1,5 @@
-# DevArt Cat Configuration
-# This file configures the DevArt bongo cat pack
+# Dark Scribble Cat Configuration
+# This file configures the Dark Scribble bongo cat pack
 
 name=Dark Scribble Cat
 bodyImage=body-darkscribblecat.png
@@ -12,20 +12,20 @@ weight=99.9
 
 # Body offsets (relative to base position)
 bodyOffsetX=0.0
-bodyOffsetY=8.0
-bodyOffsetZ=0.0
+bodyOffsetY=10.0
 
 # Left arm offsets
 leftArmOffsetX=0.0
 leftArmOffsetY=0.0
-leftArmOffsetZ=-5.0
 leftArmSpacing=1.1
 
 # Right arm offsets
-rightArmOffsetX=0.0
+rightArmOffsetX=50.0
 rightArmOffsetY=0.0
-rightArmOffsetZ=-5.0
 rightArmSpacing=2.2
 
 # Punch animation offset (multiplier for how high arms move)
 punchOffsetY=0.1
+
+# Hand down texture vertical offset (adjusts position when switching to hand down texture)
+handDownOffsetY=33.0

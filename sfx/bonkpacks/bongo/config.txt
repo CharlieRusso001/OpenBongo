@@ -1,0 +1,9 @@
+# Bongo Bonk Pack Configuration
+# This file configures the bongo bonk sound pack
+
+name=Bongo Bonk
+bonkSound=bongobonk.mp3
+iconImage=
+volume=100.0
+weight=100
+

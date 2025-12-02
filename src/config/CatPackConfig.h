@@ -14,15 +14,12 @@ struct CatPackConfig {
     // Offsets for positioning parts (relative to body position)
     float bodyOffsetX = 0.0f;
     float bodyOffsetY = 0.0f;
-    float bodyOffsetZ = 0.0f;            // Z is for layering/depth (not used in 2D but kept for future)
     
     float leftArmOffsetX = 0.0f;
     float leftArmOffsetY = 0.0f;
-    float leftArmOffsetZ = 0.0f;
     
     float rightArmOffsetX = 0.0f;
     float rightArmOffsetY = 0.0f;
-    float rightArmOffsetZ = 0.0f;
     
     // UI ordering weight (higher weight appears earlier in the UI)
     float weight = 0.0f;
@@ -33,6 +30,9 @@ struct CatPackConfig {
     
     // Punch animation offset (how much arms move up when punching)
     float punchOffsetY = 0.3f;           // Multiplier for punch animation height
+    
+    // Hand down texture vertical offset (adjusts position when switching to hand down texture)
+    float handDownOffsetY = 0.0f;        // Vertical offset when using hand down texture
     
     // Default constructor
     CatPackConfig() = default;

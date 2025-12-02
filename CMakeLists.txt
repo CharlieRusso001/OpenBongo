@@ -120,22 +120,22 @@ if(WIN32 AND EXISTS "C:/vcpkg/installed/x64-windows/share/sfml/SFMLConfig.cmake"
     set(SFML_DIR "C:/vcpkg/installed/x64-windows/share/sfml" CACHE PATH "")
     message(STATUS "Found SFML in vcpkg, using CONFIG mode")
     # vcpkg requires CONFIG mode
-    find_package(SFML 3.0 COMPONENTS System Window Graphics CONFIG QUIET)
+    find_package(SFML 3.0 COMPONENTS System Window Graphics Audio CONFIG QUIET)
     if(NOT SFML_FOUND)
-        find_package(SFML 2.5 COMPONENTS system window graphics CONFIG QUIET)
+        find_package(SFML 2.5 COMPONENTS system window graphics audio CONFIG QUIET)
     endif()
 elseif(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64-windows/share/sfml/SFMLConfig.cmake")
     set(SFML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64-windows/share/sfml" CACHE PATH "")
     message(STATUS "Found SFML in local vcpkg, using CONFIG mode")
-    find_package(SFML 3.0 COMPONENTS System Window Graphics CONFIG QUIET)
+    find_package(SFML 3.0 COMPONENTS System Window Graphics Audio CONFIG QUIET)
     if(NOT SFML_FOUND)
-        find_package(SFML 2.5 COMPONENTS system window graphics CONFIG QUIET)
+        find_package(SFML 2.5 COMPONENTS system window graphics audio CONFIG QUIET)
     endif()
 else()
     # Try to find SFML using module mode (for manual installations)
-    find_package(SFML 3.0 COMPONENTS System Window Graphics QUIET)
+    find_package(SFML 3.0 COMPONENTS System Window Graphics Audio QUIET)
     if(NOT SFML_FOUND)
-        find_package(SFML 2.5 COMPONENTS system window graphics QUIET)
+        find_package(SFML 2.5 COMPONENTS system window graphics audio QUIET)
     endif()
 endif()
 
@@ -149,16 +149,16 @@ if(NOT SFML_FOUND)
         if(EXISTS "C:/SFML/lib/cmake/SFML")
             set(SFML_DIR "C:/SFML/lib/cmake/SFML" CACHE PATH "")
             message(STATUS "Found SFML in C:/SFML")
-            find_package(SFML 3.0 COMPONENTS System Window Graphics QUIET)
+            find_package(SFML 3.0 COMPONENTS System Window Graphics Audio QUIET)
             if(NOT SFML_FOUND)
-                find_package(SFML 2.5 COMPONENTS system window graphics QUIET)
+                find_package(SFML 2.5 COMPONENTS system window graphics audio QUIET)
             endif()
         elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/SFML/lib/cmake/SFML")
             set(SFML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SFML/lib/cmake/SFML" CACHE PATH "")
             message(STATUS "Found SFML in project directory")
-            find_package(SFML 3.0 COMPONENTS System Window Graphics QUIET)
+            find_package(SFML 3.0 COMPONENTS System Window Graphics Audio QUIET)
             if(NOT SFML_FOUND)
-                find_package(SFML 2.5 COMPONENTS system window graphics QUIET)
+                find_package(SFML 2.5 COMPONENTS system window graphics audio QUIET)
             endif()
         endif()
     endif()
@@ -182,18 +182,22 @@ endif()
 
 # Source files
 set(SOURCES
-    src/main.cpp
-    src/BongoCat.cpp
-    src/BongoStats.cpp
-    src/CatPackConfig.cpp
-    src/CatPackManager.cpp
-    src/CounterEncryption.cpp
-    src/HatConfig.cpp
-    src/HatManager.cpp
-    src/KeyboardHook.cpp
-    src/MouseHook.cpp
-    src/ImageHelper.cpp
-    src/WebViewWindow.cpp
+    src/core/main.cpp
+    src/core/BongoCat.cpp
+    src/core/BongoStats.cpp
+    src/config/CatPackConfig.cpp
+    src/managers/CatPackManager.cpp
+    src/audio/BonkPackConfig.cpp
+    src/audio/BonkPackManager.cpp
+    src/audio/EntitySFXConfig.cpp
+    src/audio/EntitySFXManager.cpp
+    src/utils/CounterEncryption.cpp
+    src/config/HatConfig.cpp
+    src/managers/HatManager.cpp
+    src/input/KeyboardHook.cpp
+    src/input/MouseHook.cpp
+    src/utils/ImageHelper.cpp
+    src/ui/WebViewWindow.cpp
     ${PLATFORM_SOURCES}
 )
 
@@ -201,22 +205,22 @@ set(SOURCES
 if(WIN32)
     # Check if icon.ico exists, if not, try to copy from media/icon.jpg location
     # Note: icon.ico must be manually created from icon.jpg using convert_icon.bat or similar
-    if(EXISTS "${CMAKE_SOURCE_DIR}/src/icon.ico")
-        set(SOURCES ${SOURCES} src/OpenBongo.rc)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/src/resources/icon.ico")
+        set(SOURCES ${SOURCES} src/resources/OpenBongo.rc)
         message(STATUS "Found icon.ico, will embed in executable")
     else()
-        message(WARNING "icon.ico not found in src/ directory. Run convert_icon.bat to create it from media/icon.jpg")
+        message(WARNING "icon.ico not found in src/resources/ directory. Run convert_icon.bat to create it from media/icon.jpg")
         # Still add the resource file, but it will fail to compile without the icon
-        set(SOURCES ${SOURCES} src/OpenBongo.rc)
+        set(SOURCES ${SOURCES} src/resources/OpenBongo.rc)
     endif()
 endif()
 
 # Header files
 set(HEADERS
-    src/BongoCat.h
-    src/KeyboardHook.h
-    src/MouseHook.h
-    src/WebViewWindow.h
+    src/core/BongoCat.h
+    src/input/KeyboardHook.h
+    src/input/MouseHook.h
+    src/ui/WebViewWindow.h
     src/platform/WindowsKeyboardHook.h
     src/platform/WindowsMouseHook.h
     src/platform/MacKeyboardHook.h
@@ -253,6 +257,7 @@ target_link_libraries(${PROJECT_NAME}
     SFML::System 
     SFML::Window 
     SFML::Graphics
+    SFML::Audio
 )
 
 # Link webview library (CMake target from subdirectory)
@@ -309,6 +314,7 @@ if(WIN32)
         $<TARGET_FILE:SFML::System>
         $<TARGET_FILE:SFML::Window>
         $<TARGET_FILE:SFML::Graphics>
+        $<TARGET_FILE:SFML::Audio>
         "${EXE_DIR}"
         COMMENT "Copying SFML DLLs to executable directory"
     )
@@ -319,6 +325,7 @@ if(WIN32)
         $<TARGET_FILE:SFML::System>
         $<TARGET_FILE:SFML::Window>
         $<TARGET_FILE:SFML::Graphics>
+        $<TARGET_FILE:SFML::Audio>
         "${DLL_DIR}"
     )
     
@@ -380,6 +387,14 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/hats"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/hats"
         COMMENT "Copying hats folder to output directory"
+    )
+    
+    # Copy sfx folder to executable directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/sfx"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/sfx"
+        COMMENT "Copying sfx folder to output directory"
     )
     
     # Copy UI folder to executable directory
@@ -492,6 +507,7 @@ if(WIN32)
         $<TARGET_FILE:SFML::System>
         $<TARGET_FILE:SFML::Window>
         $<TARGET_FILE:SFML::Graphics>
+        $<TARGET_FILE:SFML::Audio>
         DESTINATION bin
         COMPONENT libraries
     )
@@ -501,6 +517,7 @@ if(WIN32)
         $<TARGET_FILE:SFML::System>
         $<TARGET_FILE:SFML::Window>
         $<TARGET_FILE:SFML::Graphics>
+        $<TARGET_FILE:SFML::Audio>
         DESTINATION bin/libs
         COMPONENT libraries
     )
@@ -529,13 +546,18 @@ if(WIN32)
     endif()
 endif()
 
-# Install catpacks and hats folders
+# Install catpacks, hats, and sfx folders
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/catpacks"
     DESTINATION bin
     COMPONENT data
 )
 
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/hats"
+    DESTINATION hats
+    FILES_MATCHING PATTERN "*"
+)
+
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/sfx"
     DESTINATION bin
     COMPONENT data
 )

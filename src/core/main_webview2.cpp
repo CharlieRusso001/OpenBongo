@@ -10,8 +10,8 @@
 // Example WebView2 integration (to be merged into main.cpp):
 
 #ifdef _WIN32
-#include "WebViewWindow.h"
-#include "ImageHelper.h"
+#include "ui/WebViewWindow.h"
+#include "utils/ImageHelper.h"
 #include <json/json.h> // You'll need a JSON library like jsoncpp or nlohmann/json
 #endif
 

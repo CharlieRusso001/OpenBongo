@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CatPackConfig.h"
+#include "config/CatPackConfig.h"
 #include <vector>
 #include <string>
 

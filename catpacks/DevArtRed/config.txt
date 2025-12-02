@@ -8,25 +8,25 @@ handDownImage=handdown-devartcat.png
 iconImage=body-devartcat.png
 
 # UI ordering weight (higher appears earlier in UI)
-weight=96
+weight=99
 
 # Body offsets (relative to base position)
 bodyOffsetX=0.0
 bodyOffsetY=0.0
-bodyOffsetZ=0.0
 
 # Left arm offsets
 leftArmOffsetX=0.0
 leftArmOffsetY=0.0
-leftArmOffsetZ=0.0
 leftArmSpacing=1.1
 
 # Right arm offsets
-rightArmOffsetX=-3.0
+rightArmOffsetX=40.0
 rightArmOffsetY=0.0
-rightArmOffsetZ=0.0
 rightArmSpacing=1.0
 
 # Punch animation offset (multiplier for how high arms move)
 punchOffsetY=0.3
+
+# Hand down texture vertical offset (adjusts position when switching to hand down texture)
+handDownOffsetY=40.0
 

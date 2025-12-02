@@ -1,4 +1,4 @@
-#include "WebViewWindow.h"
+#include "ui/WebViewWindow.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -69,8 +69,15 @@ bool WebViewWindow::initialize(void* parentHwnd, const std::string& htmlPath) {
         // Start Crow HTTP server in a separate thread
         startServer();
         
-        // Wait a bit for server to start
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Wait for server to start (poll with timeout instead of fixed sleep)
+        auto startTime = std::chrono::steady_clock::now();
+        const auto timeout = std::chrono::milliseconds(500);
+        while ((std::chrono::steady_clock::now() - startTime) < timeout) {
+            if (m_serverRunning && m_serverPort > 0) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         
         if (!m_serverRunning || m_serverPort == 0) {
             std::cerr << "Failed to start Crow server" << std::endl;
@@ -87,7 +94,7 @@ bool WebViewWindow::initialize(void* parentHwnd, const std::string& htmlPath) {
         
         // Set window properties
         webview_set_title(m_webview, "OpenBongo Settings");
-        webview_set_size(m_webview, 500, 600, WEBVIEW_HINT_FIXED);
+        webview_set_size(m_webview, 650, 600, WEBVIEW_HINT_FIXED);
         
         // Bind message handler
         webview_bind(m_webview, "postMessage", messageCallback, this);
