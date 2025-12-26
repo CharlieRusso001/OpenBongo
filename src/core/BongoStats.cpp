@@ -19,8 +19,8 @@ void BongoStats::initialize(const std::string& baseDataDir) {
     this->baseDataDir = baseDataDir;
     firstKeyPressTime = 0;
     lastKeyPressTime = 0;
-    totalMinutesOpen = 0.0;
-    // Load today's stats from file
+    // Don't set totalMinutesOpen to 0 - let loadStats set it from file
+    // Load today's stats from file (this will set totalMinutesOpen from file)
     loadStats(false); // Load from today's file
     // Then set app start time for current session
     appStartTime = std::time(nullptr);
@@ -217,19 +217,120 @@ void BongoStats::saveStats() {
         return;
     }
     
-    // Update total minutes before saving to ensure current session time is included
-    if (appStartTime > 0) {
-        time_t now = std::time(nullptr);
-        double minutesThisSession = static_cast<double>(now - appStartTime) / 60.0;
-        if (minutesThisSession > 0.001) { // Update if any time has passed
-            totalMinutesOpen += minutesThisSession;
-            appStartTime = now; // Reset appStartTime to now for next interval
-        }
-    }
-    
     try {
         // Get today's file path
         std::string todayFile = getTodayFilePath();
+        
+        // CRITICAL: Load existing data from file first and merge with current session data
+        // This ensures we never lose data that's already in the file
+        std::map<unsigned int, int> existingKeyCounts;
+        std::map<std::string, int> existingMouseCounts;
+        double existingTotalMinutes = 0.0;
+        
+        // Try to load existing data from today's file
+        std::map<unsigned int, int> tempKeyCounts;
+        std::map<std::string, int> tempMouseCounts;
+        double tempMinutes = 0.0;
+        bool fileExists = parseDailyFile(todayFile, tempKeyCounts, tempMouseCounts, tempMinutes);
+        if (fileExists) {
+            existingKeyCounts = tempKeyCounts;
+            existingMouseCounts = tempMouseCounts;
+            existingTotalMinutes = tempMinutes;
+        }
+        
+        // CRITICAL SAFETY CHECK: If file exists and has data, but in-memory state is empty,
+        // DO NOT SAVE - this would overwrite the file with empty data
+        // This prevents data loss when app closes with empty in-memory state
+        int existingTotal = 0;
+        for (const auto& pair : existingKeyCounts) existingTotal += pair.second;
+        for (const auto& pair : existingMouseCounts) existingTotal += pair.second;
+        
+        int currentTotal = 0;
+        for (const auto& pair : keyPressCounts) currentTotal += pair.second;
+        for (const auto& pair : mouseButtonCounts) currentTotal += pair.second;
+        
+        if (fileExists && existingTotal > 0 && currentTotal == 0) {
+            // File has data but in-memory is completely empty - don't overwrite!
+            // This happens when loadStats fails or file doesn't load properly
+            return;
+        }
+        
+        // Update total minutes before saving to ensure current session time is included
+        // But only if we have actual activity or existing data
+        if (appStartTime > 0 && (currentTotal > 0 || existingTotal > 0)) {
+            time_t now = std::time(nullptr);
+            double minutesThisSession = static_cast<double>(now - appStartTime) / 60.0;
+            if (minutesThisSession > 0.001) { // Update if any time has passed
+                totalMinutesOpen += minutesThisSession;
+                appStartTime = now; // Reset appStartTime to now for next interval
+            }
+        }
+        
+        // Merge: Start with existing file data, then add current session's new data
+        // This ensures we never lose data that's already saved
+        std::map<unsigned int, int> mergedKeyCounts = existingKeyCounts;
+        for (const auto& pair : keyPressCounts) {
+            // Add to existing count (if key exists) or set to current value
+            // Since keyPressCounts might already include loaded data, we use the maximum
+            // to avoid double-counting while preserving all data
+            if (mergedKeyCounts.find(pair.first) == mergedKeyCounts.end()) {
+                mergedKeyCounts[pair.first] = pair.second;
+            } else {
+                // Use maximum to ensure we never lose data
+                if (pair.second > mergedKeyCounts[pair.first]) {
+                    mergedKeyCounts[pair.first] = pair.second;
+                }
+            }
+        }
+        
+        std::map<std::string, int> mergedMouseCounts = existingMouseCounts;
+        for (const auto& pair : mouseButtonCounts) {
+            // Add to existing count (if key exists) or set to current value
+            if (mergedMouseCounts.find(pair.first) == mergedMouseCounts.end()) {
+                mergedMouseCounts[pair.first] = pair.second;
+            } else {
+                // Use maximum to ensure we never lose data
+                if (pair.second > mergedMouseCounts[pair.first]) {
+                    mergedMouseCounts[pair.first] = pair.second;
+                }
+            }
+        }
+        
+        // For total minutes, use the maximum to ensure we never lose time
+        double mergedTotalMinutes = (existingTotalMinutes > totalMinutesOpen) ? existingTotalMinutes : totalMinutesOpen;
+        
+        // SAFETY CHECK: Never overwrite a file that has data with an empty or smaller dataset
+        // This prevents data loss if saveStats() is called with empty in-memory state
+        int existingTotalKeys = 0;
+        for (const auto& pair : existingKeyCounts) {
+            existingTotalKeys += pair.second;
+        }
+        int existingTotalMouse = 0;
+        for (const auto& pair : existingMouseCounts) {
+            existingTotalMouse += pair.second;
+        }
+        
+        int currentTotalKeys = 0;
+        for (const auto& pair : keyPressCounts) {
+            currentTotalKeys += pair.second;
+        }
+        int currentTotalMouse = 0;
+        for (const auto& pair : mouseButtonCounts) {
+            currentTotalMouse += pair.second;
+        }
+        
+        // CRITICAL: If existing file has data and current state would result in less data,
+        // use the merged data (which preserves existing) instead of overwriting
+        // Only skip saving entirely if existing file has substantial data and current is completely empty
+        // (This might happen if saveStats is called before loadStats)
+        if (existingTotalKeys + existingTotalMouse > 0 && 
+            currentTotalKeys + currentTotalMouse == 0 &&
+            mergedKeyCounts.size() == existingKeyCounts.size() &&
+            mergedMouseCounts.size() == existingMouseCounts.size()) {
+            // File has data, in-memory is empty, and merge didn't add anything new
+            // Don't overwrite - preserve existing file
+            return;
+        }
         
         // Helper function to escape JSON strings
         auto escapeJSON = [](const std::string& str) -> std::string {
@@ -245,6 +346,47 @@ void BongoStats::saveStats() {
             return escaped;
         };
         
+        // FINAL SAFETY CHECK: Verify merged data has at least as much as existing file
+        int mergedTotalKeys = 0;
+        for (const auto& pair : mergedKeyCounts) {
+            mergedTotalKeys += pair.second;
+        }
+        int mergedTotalMouse = 0;
+        for (const auto& pair : mergedMouseCounts) {
+            mergedTotalMouse += pair.second;
+        }
+        
+        // CRITICAL: If file exists and has data, never save less data than what's in the file
+        // This is the ultimate protection against data loss
+        if (fileExists && (existingTotalKeys + existingTotalMouse > 0)) {
+            int mergedTotal = mergedTotalKeys + mergedTotalMouse;
+            int existingTotal = existingTotalKeys + existingTotalMouse;
+            
+            // If merged data has less than existing file, something is wrong - don't save
+            if (mergedTotal < existingTotal) {
+                // Merged data has less than existing - this shouldn't happen, but protect against it
+                // This prevents any scenario where we'd lose data
+                return;
+            }
+            
+            // Also check individual counts - if any key/mouse count would decrease, don't save
+            // This is extra protection
+            for (const auto& existingPair : existingKeyCounts) {
+                auto mergedIt = mergedKeyCounts.find(existingPair.first);
+                if (mergedIt != mergedKeyCounts.end() && mergedIt->second < existingPair.second) {
+                    // This key would have less count - don't save
+                    return;
+                }
+            }
+            for (const auto& existingPair : existingMouseCounts) {
+                auto mergedIt = mergedMouseCounts.find(existingPair.first);
+                if (mergedIt != mergedMouseCounts.end() && mergedIt->second < existingPair.second) {
+                    // This mouse button would have less count - don't save
+                    return;
+                }
+            }
+        }
+        
         std::ofstream outFile(todayFile);
         if (outFile.is_open()) {
             // Get current year and date
@@ -259,22 +401,22 @@ void BongoStats::saveStats() {
             outFile << "{\n";
             outFile << "  \"year\": " << currentYear << ",\n";
             outFile << "  \"date\": \"" << dateStr << "\",\n";
-            outFile << "  \"totalMinutesOpen\": " << std::fixed << std::setprecision(2) << totalMinutesOpen << ",\n";
+            outFile << "  \"totalMinutesOpen\": " << std::fixed << std::setprecision(2) << mergedTotalMinutes << ",\n";
             
-            // Save mouse button counts
+            // Save merged mouse button counts
             outFile << "  \"mouseButtonCounts\": {\n";
             bool firstMouse = true;
-            for (const auto& pair : mouseButtonCounts) {
+            for (const auto& pair : mergedMouseCounts) {
                 if (!firstMouse) outFile << ",\n";
                 outFile << "    \"" << escapeJSON(pair.first) << "\": " << pair.second;
                 firstMouse = false;
             }
             outFile << "\n  },\n";
             
-            // Save keyboard key counts
+            // Save merged keyboard key counts
             outFile << "  \"keyPressCounts\": {\n";
             bool firstKey = true;
-            for (const auto& pair : keyPressCounts) {
+            for (const auto& pair : mergedKeyCounts) {
                 if (!firstKey) outFile << ",\n";
                 outFile << "    \"" << pair.first << "\": " << pair.second;
                 firstKey = false;
@@ -474,11 +616,12 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
     try {
         std::ifstream inFile(todayFile);
         if (!inFile.is_open()) {
-            // File doesn't exist yet, start fresh
+            // File doesn't exist yet - only clear if explicitly requested
+            // Don't clear if we're just initializing and file doesn't exist
             if (!mergeWithCurrent) {
-                keyPressCounts.clear();
-                mouseButtonCounts.clear();
-                totalMinutesOpen = 0.0;
+                // Only clear if we're explicitly loading (not just initializing)
+                // But preserve existing in-memory state if file doesn't exist
+                // This prevents overwriting with empty data
             }
             return;
         }
@@ -487,7 +630,8 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
         if (!mergeWithCurrent) {
             keyPressCounts.clear();
             mouseButtonCounts.clear();
-            totalMinutesOpen = 0.0;
+            // Don't reset totalMinutesOpen here - let parseDailyFile set it
+            // If parseDailyFile fails, we'll keep whatever was there before
             firstKeyPressTime = 0;
             lastKeyPressTime = 0;
             // Don't clear keyPressTimestamps - they're for current session KPM/WPM calculation
@@ -514,11 +658,14 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
                 totalMinutesOpen += fileMinutes;
             }
         }
+        // If parseDailyFile fails, we don't modify totalMinutesOpen
+        // This preserves any existing value and prevents overwriting with 0
         
         // After loading, reset appStartTime to now (file already contains accumulated time)
         appStartTime = std::time(nullptr);
     } catch (...) {
-        // On error, start with empty stats
+        // On error, don't modify anything - preserve existing state
+        // This prevents overwriting with empty data on errors
     }
 }
 
