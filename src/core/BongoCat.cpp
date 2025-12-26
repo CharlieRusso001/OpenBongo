@@ -391,14 +391,21 @@ void BongoCat::recalculatePositions() {
         // This swaps left and right while maintaining the same spacing
         leftArmX = 2.0f * bodyCenterX - rightArmXOriginal;
         rightArmX = 2.0f * bodyCenterX - leftArmXOriginal;
+        
+        // When flipped, swap AND negate the offsets because we're mirroring
+        // leftArmX (visually on right) should get negated rightArmOffsetX
+        // rightArmX (visually on left) should get negated leftArmOffsetX
+        // Negation is needed because mirroring reverses the direction
+        leftArmX -= rightArmOffsetX;
+        rightArmX -= leftArmOffsetX;
     } else {
         leftArmX = leftArmXOriginal;
         rightArmX = rightArmXOriginal;
+        
+        // Apply user-adjustable horizontal offsets normally when not flipped
+        leftArmX += leftArmOffsetX;
+        rightArmX += rightArmOffsetX;
     }
-    
-    // Apply user-adjustable horizontal offsets
-    leftArmX += leftArmOffsetX;
-    rightArmX += rightArmOffsetX;
     
     leftArmRestPos = sf::Vector2f(leftArmX, handY + config.leftArmOffsetY);
     rightArmRestPos = sf::Vector2f(rightArmX, handY + config.rightArmOffsetY);

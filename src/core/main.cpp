@@ -231,10 +231,9 @@ int main() {
         std::cerr << "Failed to initialize logger: " << e.what() << std::endl;
     }
     
-    // Initialize stats tracker - save stats file in stats folder
-    std::string statsPath = (std::filesystem::path(statsDirPath) / "BongoStats.json").string();
+    // Initialize stats tracker - pass base directory for daily file system
     try {
-        BongoStats::getInstance().initialize(statsPath);
+        BongoStats::getInstance().initialize(statsDirPath);
         // appStartTime is already set in initialize() after loading stats
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to initialize stats tracker: " + std::string(e.what()));
@@ -1241,11 +1240,8 @@ int main() {
                                             sendSelectedBonkPack(*settingsWebView, currentBonkPack);
                                         } else if (type == "getWrappedStats") {
                                             LOG_INFO("Sending wrapped stats");
-                                            // Update and save stats first to ensure file has latest data
-                                            BongoStats::getInstance().updateTotalMinutes();
-                                            BongoStats::getInstance().saveStats();
-                                            // Then reload directly from file (no merge, use file only)
-                                            BongoStats::getInstance().loadStats(false);
+                                            // getWrappedStatsJSON() reads directly from the JSON file
+                                            // It doesn't use any in-memory state, ensuring consistent results
                                             std::string wrappedStats = BongoStats::getInstance().getWrappedStatsJSON();
                                             LOG_INFO("Wrapped stats JSON: " + wrappedStats);
                                             sendJSONToWebView(*settingsWebView, "wrappedStats", wrappedStats);

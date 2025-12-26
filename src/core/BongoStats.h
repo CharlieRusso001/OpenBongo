@@ -14,8 +14,8 @@ public:
         return instance;
     }
     
-    // Initialize stats file path
-    void initialize(const std::string& statsFilePath);
+    // Initialize stats - takes the base data directory (e.g., AppData/OpenBongo)
+    void initialize(const std::string& baseDataDir);
     
     // Record a key press
     void recordKeyPress(unsigned int keyCode);
@@ -69,7 +69,16 @@ private:
     BongoStats(const BongoStats&) = delete;
     BongoStats& operator=(const BongoStats&) = delete;
     
-    std::string statsFilePath;
+    std::string baseDataDir; // Base directory for stats (e.g., AppData/OpenBongo)
+    
+    // Helper methods for daily file system
+    std::string getTodayFilePath() const;
+    std::string getYearFolderPath(int year) const;
+    void ensureYearFolderExists(int year) const;
+    // Parse a single daily JSON file
+    bool parseDailyFile(const std::string& filePath, std::map<unsigned int, int>& keyCounts, 
+                          std::map<std::string, int>& mouseCounts, double& minutes) const;
+    
     std::map<unsigned int, int> keyPressCounts; // keyCode -> count
     std::map<std::string, int> mouseButtonCounts; // "LEFT", "RIGHT", "MIDDLE" -> count
     std::vector<time_t> keyPressTimestamps; // Timestamps for KPM/WPM calculation

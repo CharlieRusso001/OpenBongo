@@ -8,19 +8,20 @@
 #include <mutex>
 #include <cmath>
 #include <chrono>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-void BongoStats::initialize(const std::string& statsFilePath) {
+void BongoStats::initialize(const std::string& baseDataDir) {
     std::lock_guard<std::mutex> lock(statsMutex);
-    this->statsFilePath = statsFilePath;
+    this->baseDataDir = baseDataDir;
     firstKeyPressTime = 0;
     lastKeyPressTime = 0;
     totalMinutesOpen = 0.0;
-    // Load stats first to get saved totalMinutesOpen
-    loadStats();
+    // Load today's stats from file
+    loadStats(false); // Load from today's file
     // Then set app start time for current session
     appStartTime = std::time(nullptr);
 }
@@ -59,6 +60,45 @@ int BongoStats::getMouseButtonCount(const std::string& buttonName) const {
     std::lock_guard<std::mutex> lock(statsMutex);
     auto it = mouseButtonCounts.find(buttonName);
     return (it != mouseButtonCounts.end()) ? it->second : 0;
+}
+
+// Helper: Get today's file path (e.g., DATA/2025/12.26.25.json)
+std::string BongoStats::getTodayFilePath() const {
+    time_t now = std::time(nullptr);
+    std::tm* timeInfo = std::localtime(&now);
+    int year = 1900 + timeInfo->tm_year;
+    int month = timeInfo->tm_mon + 1;
+    int day = timeInfo->tm_mday;
+    int yearShort = year % 100;
+    
+    std::string yearFolder = getYearFolderPath(year);
+    ensureYearFolderExists(year);
+    
+    // Format: MM.DD.YY.json (e.g., 12.26.25.json)
+    std::ostringstream filename;
+    filename << std::setfill('0') << std::setw(2) << month << "."
+             << std::setw(2) << day << "."
+             << std::setw(2) << yearShort << ".json";
+    
+    return (std::filesystem::path(yearFolder) / filename.str()).string();
+}
+
+// Helper: Get year folder path
+std::string BongoStats::getYearFolderPath(int year) const {
+    return (std::filesystem::path(baseDataDir) / "DATA" / std::to_string(year)).string();
+}
+
+// Helper: Ensure year folder exists
+void BongoStats::ensureYearFolderExists(int year) const {
+    if (baseDataDir.empty()) return;
+    try {
+        std::string dataDir = (std::filesystem::path(baseDataDir) / "DATA").string();
+        std::filesystem::create_directories(dataDir);
+        std::string yearFolder = getYearFolderPath(year);
+        std::filesystem::create_directories(yearFolder);
+    } catch (...) {
+        // Silently fail
+    }
 }
 
 std::string BongoStats::getKeyName(unsigned int keyCode) const {
@@ -173,7 +213,7 @@ std::string BongoStats::formatStats() const {
 
 void BongoStats::saveStats() {
     std::lock_guard<std::mutex> lock(statsMutex);
-    if (statsFilePath.empty()) {
+    if (baseDataDir.empty()) {
         return;
     }
     
@@ -188,6 +228,9 @@ void BongoStats::saveStats() {
     }
     
     try {
+        // Get today's file path
+        std::string todayFile = getTodayFilePath();
+        
         // Helper function to escape JSON strings
         auto escapeJSON = [](const std::string& str) -> std::string {
             std::string escaped;
@@ -202,9 +245,9 @@ void BongoStats::saveStats() {
             return escaped;
         };
         
-        std::ofstream outFile(statsFilePath);
+        std::ofstream outFile(todayFile);
         if (outFile.is_open()) {
-            // Get current year for year-based stats
+            // Get current year and date
             time_t now = std::time(nullptr);
             std::tm* timeInfo = std::localtime(&now);
             int currentYear = 1900 + timeInfo->tm_year;
@@ -215,7 +258,7 @@ void BongoStats::saveStats() {
             
             outFile << "{\n";
             outFile << "  \"year\": " << currentYear << ",\n";
-            outFile << "  \"lastUpdated\": \"" << dateStr << "\",\n";
+            outFile << "  \"date\": \"" << dateStr << "\",\n";
             outFile << "  \"totalMinutesOpen\": " << std::fixed << std::setprecision(2) << totalMinutesOpen << ",\n";
             
             // Save mouse button counts
@@ -247,73 +290,47 @@ void BongoStats::saveStats() {
     }
 }
 
-void BongoStats::loadStats(bool mergeWithCurrent) {
-    std::lock_guard<std::mutex> lock(statsMutex);
-    if (statsFilePath.empty()) {
-        return;
-    }
-    
+// Parse a single daily JSON file
+bool BongoStats::parseDailyFile(const std::string& filePath, std::map<unsigned int, int>& keyCounts, 
+                                  std::map<std::string, int>& mouseCounts, double& minutes) const {
     try {
-        std::ifstream inFile(statsFilePath);
+        std::ifstream inFile(filePath);
         if (!inFile.is_open()) {
-            // File doesn't exist yet, start fresh
-            return;
-        }
-
-        // Always load from file (don't merge) - clear existing data first
-        if (!mergeWithCurrent) {
-            keyPressCounts.clear();
-            mouseButtonCounts.clear();
-            totalMinutesOpen = 0.0;
-            firstKeyPressTime = 0;
-            lastKeyPressTime = 0;
+            return false;
         }
         
-        // Read entire file into string
         std::string jsonContent((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
         inFile.close();
         
-        // Simple JSON parser - find values by key
+        if (jsonContent.empty()) return false;
+        
+        // Helper to find JSON value
         auto findJSONValue = [](const std::string& json, const std::string& key) -> std::string {
             std::string searchKey = "\"" + key + "\"";
             size_t pos = json.find(searchKey);
             if (pos == std::string::npos) return "";
-            
-            // Find the colon after the key
             pos = json.find(":", pos);
             if (pos == std::string::npos) return "";
-            pos++; // Skip colon
-            
-            // Skip whitespace
+            pos++;
             while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-            
             if (pos >= json.size()) return "";
-            
-            // If it's a string value (starts with ")
             if (json[pos] == '"') {
-                pos++; // Skip opening quote
+                pos++;
                 size_t endPos = pos;
                 while (endPos < json.size()) {
-                    if (json[endPos] == '\\') {
-                        endPos += 2; // Skip escaped character
-                        continue;
-                    }
-                    if (json[endPos] == '"') {
-                        break; // Found closing quote
-                    }
+                    if (json[endPos] == '\\') { endPos += 2; continue; }
+                    if (json[endPos] == '"') break;
                     endPos++;
                 }
                 if (endPos < json.size()) {
                     return json.substr(pos, endPos - pos);
                 }
             } else {
-                // Number or other value - find end (comma, }, or newline)
                 size_t endPos = pos;
                 while (endPos < json.size() && json[endPos] != ',' && json[endPos] != '}' && json[endPos] != '\n' && json[endPos] != ' ') {
                     endPos++;
                 }
                 std::string value = json.substr(pos, endPos - pos);
-                // Trim trailing whitespace
                 while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
                     value.pop_back();
                 }
@@ -322,22 +339,16 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
             return "";
         };
         
+        // Helper to find JSON object
         auto findJSONObject = [](const std::string& json, const std::string& key) -> std::string {
             std::string searchKey = "\"" + key + "\"";
             size_t pos = json.find(searchKey);
             if (pos == std::string::npos) return "";
-            
-            // Find the colon after the key
             pos = json.find(":", pos);
             if (pos == std::string::npos) return "";
-            pos++; // Skip colon
-            
-            // Skip whitespace
+            pos++;
             while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
-            
             if (pos >= json.size() || json[pos] != '{') return "";
-            
-            // Find matching closing brace
             int braceCount = 0;
             size_t startPos = pos;
             while (pos < json.size()) {
@@ -348,10 +359,9 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
                         return json.substr(startPos, pos - startPos + 1);
                     }
                 } else if (json[pos] == '"') {
-                    // Skip string content
                     pos++;
                     while (pos < json.size() && json[pos] != '"') {
-                        if (json[pos] == '\\') pos++; // Skip escaped character
+                        if (json[pos] == '\\') pos++;
                         pos++;
                     }
                 }
@@ -360,133 +370,148 @@ void BongoStats::loadStats(bool mergeWithCurrent) {
             return "";
         };
         
-        // Check year - if different year, reset stats
-        std::string yearStr = findJSONValue(jsonContent, "year");
-        if (!yearStr.empty()) {
-            try {
-                int fileYear = std::stoi(yearStr);
-                time_t now = std::time(nullptr);
-                std::tm* ti = std::localtime(&now);
-                int currentYear = ti ? (1900 + ti->tm_year) : fileYear;
-                if (fileYear != currentYear) {
-                    // Year changed: reset stats
-                    keyPressCounts.clear();
-                    mouseButtonCounts.clear();
-                    totalMinutesOpen = 0.0;
-                    firstKeyPressTime = 0;
-                    lastKeyPressTime = 0;
-                    appStartTime = std::time(nullptr);
-                    // Clear the file
-                    std::ofstream out(statsFilePath, std::ios::trunc);
-                    out << "{\n  \"year\": " << currentYear << ",\n  \"totalMinutesOpen\": 0.0,\n  \"mouseButtonCounts\": {},\n  \"keyPressCounts\": {}\n}\n";
-                    return;
-                }
-            } catch (...) {
-                // Ignore parse errors
-            }
-        }
-        
-        // Load total minutes open
+        // Get total minutes
         std::string minutesStr = findJSONValue(jsonContent, "totalMinutesOpen");
         if (!minutesStr.empty()) {
             try {
-                totalMinutesOpen = std::stod(minutesStr);
-            } catch (...) {
-                // Ignore parse errors
-            }
+                minutes += std::stod(minutesStr); // Add to existing (for aggregation)
+            } catch (...) {}
         }
         
-        // Load mouse button counts
+        // Parse mouse button counts
         std::string mouseObj = findJSONObject(jsonContent, "mouseButtonCounts");
         if (!mouseObj.empty()) {
-            // Parse key-value pairs from the object
-            size_t pos = 1; // Skip opening {
+            size_t pos = 1;
             while (pos < mouseObj.size() - 1) {
-                // Skip whitespace and commas
-                while (pos < mouseObj.size() && (mouseObj[pos] == ' ' || mouseObj[pos] == '\t' || mouseObj[pos] == ',' || mouseObj[pos] == '\n')) pos++;
-                if (pos >= mouseObj.size() - 1) break;
-                
-                // Find key (string in quotes)
-                if (mouseObj[pos] != '"') break;
-                pos++; // Skip opening quote
+                while (pos < mouseObj.size() && (mouseObj[pos] == ' ' || mouseObj[pos] == '\t' || mouseObj[pos] == ',' || mouseObj[pos] == '\n' || mouseObj[pos] == '\r')) pos++;
+                if (pos >= mouseObj.size() - 1 || mouseObj[pos] == '}') break;
+                if (mouseObj[pos] != '"') { pos++; continue; }
+                pos++;
                 size_t keyStart = pos;
                 while (pos < mouseObj.size() && mouseObj[pos] != '"') {
-                    if (mouseObj[pos] == '\\') pos++; // Skip escaped character
+                    if (mouseObj[pos] == '\\' && pos + 1 < mouseObj.size()) { pos += 2; continue; }
                     pos++;
                 }
+                if (pos >= mouseObj.size()) break;
                 std::string buttonName = mouseObj.substr(keyStart, pos - keyStart);
-                pos++; // Skip closing quote
-                
-                // Find colon
+                pos++;
                 while (pos < mouseObj.size() && mouseObj[pos] != ':') pos++;
                 if (pos >= mouseObj.size()) break;
-                pos++; // Skip colon
-                
-                // Skip whitespace
+                pos++;
                 while (pos < mouseObj.size() && (mouseObj[pos] == ' ' || mouseObj[pos] == '\t')) pos++;
-                
-                // Find number value
                 size_t valueStart = pos;
-                while (pos < mouseObj.size() && mouseObj[pos] != ',' && mouseObj[pos] != '}' && mouseObj[pos] != ' ' && mouseObj[pos] != '\n') pos++;
+                while (pos < mouseObj.size() && mouseObj[pos] != ',' && mouseObj[pos] != '}' && mouseObj[pos] != '\n' && mouseObj[pos] != '\r') pos++;
                 std::string countStr = mouseObj.substr(valueStart, pos - valueStart);
-                try {
-                    int count = std::stoi(countStr);
-                    if (!mergeWithCurrent) {
-                        mouseButtonCounts[buttonName] = count;
-                    } else {
-                        mouseButtonCounts[buttonName] += count;
-                    }
-                } catch (...) {
-                    // Ignore parse errors
+                while (!countStr.empty() && (countStr.back() == ' ' || countStr.back() == '\t' || countStr.back() == '\r' || countStr.back() == '\n')) {
+                    countStr.pop_back();
                 }
+                while (!countStr.empty() && (countStr.front() == ' ' || countStr.front() == '\t')) {
+                    countStr.erase(0, 1);
+                }
+                try {
+                    if (!countStr.empty()) {
+                        int count = std::stoi(countStr);
+                        mouseCounts[buttonName] += count; // Add to existing (for aggregation)
+                    }
+                } catch (...) {}
+                if (pos < mouseObj.size() && mouseObj[pos] == ',') pos++;
             }
         }
         
-        // Load keyboard key counts
+        // Parse keyboard key counts
         std::string keyObj = findJSONObject(jsonContent, "keyPressCounts");
         if (!keyObj.empty()) {
-            // Parse key-value pairs from the object
-            size_t pos = 1; // Skip opening {
+            size_t pos = 1;
             while (pos < keyObj.size() - 1) {
-                // Skip whitespace and commas
                 while (pos < keyObj.size() && (keyObj[pos] == ' ' || keyObj[pos] == '\t' || keyObj[pos] == ',' || keyObj[pos] == '\n')) pos++;
-                if (pos >= keyObj.size() - 1) break;
-                
-                // Find key (number as string in quotes, or just number)
+                if (pos >= keyObj.size() - 1 || keyObj[pos] == '}') break;
                 size_t keyStart = pos;
                 if (keyObj[pos] == '"') {
-                    pos++; // Skip opening quote
+                    pos++;
                     keyStart = pos;
                     while (pos < keyObj.size() && keyObj[pos] != '"') pos++;
                 } else {
                     while (pos < keyObj.size() && keyObj[pos] != ':' && keyObj[pos] != ' ' && keyObj[pos] != '\t') pos++;
                 }
                 std::string keyCodeStr = keyObj.substr(keyStart, pos - keyStart);
-                if (keyObj[pos] == '"') pos++; // Skip closing quote
-                
-                // Find colon
+                if (keyObj[pos] == '"') pos++;
                 while (pos < keyObj.size() && keyObj[pos] != ':') pos++;
                 if (pos >= keyObj.size()) break;
-                pos++; // Skip colon
-                
-                // Skip whitespace
+                pos++;
                 while (pos < keyObj.size() && (keyObj[pos] == ' ' || keyObj[pos] == '\t')) pos++;
-                
-                // Find number value
                 size_t valueStart = pos;
                 while (pos < keyObj.size() && keyObj[pos] != ',' && keyObj[pos] != '}' && keyObj[pos] != ' ' && keyObj[pos] != '\n') pos++;
                 std::string countStr = keyObj.substr(valueStart, pos - valueStart);
-                try {
-                    unsigned int keyCode = static_cast<unsigned int>(std::stoul(keyCodeStr));
-                    int count = std::stoi(countStr);
-                    if (!mergeWithCurrent) {
-                        keyPressCounts[keyCode] = count;
-                    } else {
-                        keyPressCounts[keyCode] += count;
-                    }
-                } catch (...) {
-                    // Ignore parse errors
+                while (!countStr.empty() && (countStr.back() == ' ' || countStr.back() == '\t')) {
+                    countStr.pop_back();
                 }
+                try {
+                    if (!keyCodeStr.empty() && !countStr.empty()) {
+                        unsigned int keyCode = static_cast<unsigned int>(std::stoul(keyCodeStr));
+                        int count = std::stoi(countStr);
+                        keyCounts[keyCode] += count; // Add to existing (for aggregation)
+                    }
+                } catch (...) {}
+                if (pos < keyObj.size() && keyObj[pos] == ',') pos++;
+            }
+        }
+        
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void BongoStats::loadStats(bool mergeWithCurrent) {
+    std::lock_guard<std::mutex> lock(statsMutex);
+    if (baseDataDir.empty()) {
+        return;
+    }
+    
+    // Load from today's file only
+    std::string todayFile = getTodayFilePath();
+    
+    try {
+        std::ifstream inFile(todayFile);
+        if (!inFile.is_open()) {
+            // File doesn't exist yet, start fresh
+            if (!mergeWithCurrent) {
+                keyPressCounts.clear();
+                mouseButtonCounts.clear();
+                totalMinutesOpen = 0.0;
+            }
+            return;
+        }
+
+        // Always load from file (don't merge) - clear existing data first
+        if (!mergeWithCurrent) {
+            keyPressCounts.clear();
+            mouseButtonCounts.clear();
+            totalMinutesOpen = 0.0;
+            firstKeyPressTime = 0;
+            lastKeyPressTime = 0;
+            // Don't clear keyPressTimestamps - they're for current session KPM/WPM calculation
+        }
+        
+        // Use parseDailyFile to load today's data
+        double fileMinutes = 0.0;
+        std::map<unsigned int, int> fileKeyCounts;
+        std::map<std::string, int> fileMouseCounts;
+        
+        if (parseDailyFile(todayFile, fileKeyCounts, fileMouseCounts, fileMinutes)) {
+            if (!mergeWithCurrent) {
+                keyPressCounts = fileKeyCounts;
+                mouseButtonCounts = fileMouseCounts;
+                totalMinutesOpen = fileMinutes;
+            } else {
+                // Merge with existing
+                for (const auto& pair : fileKeyCounts) {
+                    keyPressCounts[pair.first] += pair.second;
+                }
+                for (const auto& pair : fileMouseCounts) {
+                    mouseButtonCounts[pair.first] += pair.second;
+                }
+                totalMinutesOpen += fileMinutes;
             }
         }
         
@@ -566,9 +591,65 @@ double BongoStats::getWordsPerMinute() const {
 }
 
 std::string BongoStats::getWrappedStatsJSON() const {
-    // Note: We don't lock at the start because getTotalKeyPresses(), getKeysPerMinute(), 
-    // and getWordsPerMinute() already lock the mutex themselves. We only lock when
-    // directly accessing keyPressCounts.
+    // Read ALL daily files from the current year's folder and aggregate them
+    // This ensures wrapped stats show the complete year's data
+    
+    // Lock to safely read the base directory
+    std::string dataDir;
+    {
+        std::lock_guard<std::mutex> lock(statsMutex);
+        dataDir = baseDataDir;
+    }
+    
+    // Get current year
+    std::time_t now = std::time(nullptr);
+    std::tm* timeInfo = std::localtime(&now);
+    int currentYear = 1900 + timeInfo->tm_year;
+    
+    // If base directory is not set, return empty stats
+    if (dataDir.empty()) {
+        return "{\"year\":" + std::to_string(currentYear) + ",\"totalKeys\":0,\"totalMouseClicks\":0,\"totalInputs\":0,\"keysPerMinute\":0.00,\"wordsPerMinute\":0.00,\"totalMinutesOpen\":0.00,\"topInputs\":[]}";
+    }
+    
+    // Get year folder path
+    std::string yearFolder = getYearFolderPath(currentYear);
+    
+    // Aggregate data from all daily files in the year folder
+    std::map<unsigned int, int> aggregatedKeyCounts;
+    std::map<std::string, int> aggregatedMouseCounts;
+    double aggregatedTotalMinutes = 0.0;
+    
+    // Iterate through all files in the year folder
+    try {
+        if (std::filesystem::exists(yearFolder) && std::filesystem::is_directory(yearFolder)) {
+            for (const auto& entry : std::filesystem::directory_iterator(yearFolder)) {
+                if (entry.is_regular_file()) {
+                    std::string filePath = entry.path().string();
+                    // Only process .json files
+                    if (filePath.size() > 5 && filePath.substr(filePath.size() - 5) == ".json") {
+                        // Parse this daily file and aggregate the data
+                        std::map<unsigned int, int> fileKeyCounts;
+                        std::map<std::string, int> fileMouseCounts;
+                        double fileMinutes = 0.0;
+                        if (parseDailyFile(filePath, fileKeyCounts, fileMouseCounts, fileMinutes)) {
+                            // Aggregate key counts
+                            for (const auto& pair : fileKeyCounts) {
+                                aggregatedKeyCounts[pair.first] += pair.second;
+                            }
+                            // Aggregate mouse counts
+                            for (const auto& pair : fileMouseCounts) {
+                                aggregatedMouseCounts[pair.first] += pair.second;
+                            }
+                            // Aggregate minutes
+                            aggregatedTotalMinutes += fileMinutes;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        // If folder doesn't exist or can't be read, continue with empty stats
+    }
     
     // Helper function to escape JSON strings
     auto escapeJSON = [](const std::string& str) -> std::string {
@@ -584,51 +665,40 @@ std::string BongoStats::getWrappedStatsJSON() const {
         return escaped;
     };
     
-    std::ostringstream json;
-    json << "{";
-    
-    // Get current year
-    std::time_t now = std::time(nullptr);
-    std::tm* timeInfo = std::localtime(&now);
-    int currentYear = 1900 + timeInfo->tm_year;
-    
-    json << "\"year\":" << currentYear << ",";
-    // Get total keys and mouse clicks
-    int totalKeys = getTotalKeyPresses();
+    // Calculate totals from aggregated data
+    int totalKeys = 0;
+    for (const auto& pair : aggregatedKeyCounts) {
+        totalKeys += pair.second;
+    }
     int totalMouseClicks = 0;
-    {
-        std::lock_guard<std::mutex> lock(statsMutex);
-        for (const auto& pair : mouseButtonCounts) {
-            totalMouseClicks += pair.second;
-        }
+    for (const auto& pair : aggregatedMouseCounts) {
+        totalMouseClicks += pair.second;
     }
     int totalInputs = totalKeys + totalMouseClicks;
     
-    json << "\"totalKeys\":" << totalKeys << ",";
-    json << "\"totalMouseClicks\":" << totalMouseClicks << ",";
-    json << "\"totalInputs\":" << totalInputs << ",";
-    json << "\"keysPerMinute\":" << std::fixed << std::setprecision(2) << getKeysPerMinute() << ",";
-    json << "\"wordsPerMinute\":" << std::fixed << std::setprecision(2) << getWordsPerMinute() << ",";
-    json << "\"totalMinutesOpen\":" << std::fixed << std::setprecision(2) << getTotalMinutesOpen() << ",";
-    
-    // Get top keys and mouse clicks combined - need to lock here to access both maps
+    // Build sorted inputs list from aggregated data
     std::vector<std::pair<std::string, int>> sortedInputs;
-    {
-        std::lock_guard<std::mutex> lock(statsMutex);
-        // Add keys
-        for (const auto& pair : keyPressCounts) {
-            sortedInputs.push_back({getKeyName(pair.first), pair.second});
-        }
-        // Add mouse clicks
-        for (const auto& pair : mouseButtonCounts) {
-            sortedInputs.push_back({pair.first + " CLICK", pair.second});
-        }
+    for (const auto& pair : aggregatedKeyCounts) {
+        sortedInputs.push_back({getKeyName(pair.first), pair.second});
+    }
+    for (const auto& pair : aggregatedMouseCounts) {
+        sortedInputs.push_back({pair.first + " CLICK", pair.second});
     }
     std::sort(sortedInputs.begin(), sortedInputs.end(), 
         [](const std::pair<std::string, int>& a, const std::pair<std::string, int>& b) {
             return a.second > b.second;
         });
     
+    // Build JSON response
+    std::ostringstream json;
+    json << "{";
+    json << "\"year\":" << currentYear << ",";
+    json << "\"totalKeys\":" << totalKeys << ",";
+    json << "\"totalMouseClicks\":" << totalMouseClicks << ",";
+    json << "\"totalInputs\":" << totalInputs << ",";
+    json << "\"keysPerMinute\":0.00,";
+    json << "\"wordsPerMinute\":0.00,";
+    json << "\"totalMinutesOpen\":" << std::fixed << std::setprecision(2) << aggregatedTotalMinutes << ",";
     json << "\"topInputs\":[";
     int topCount = (sortedInputs.size() < 10) ? static_cast<int>(sortedInputs.size()) : 10;
     for (int i = 0; i < topCount; i++) {
@@ -636,8 +706,8 @@ std::string BongoStats::getWrappedStatsJSON() const {
         json << "{\"key\":\"" << escapeJSON(sortedInputs[i].first) << "\",\"count\":" << sortedInputs[i].second << "}";
     }
     json << "]";
-    
     json << "}";
+    
     return json.str();
 }
 
