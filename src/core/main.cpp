@@ -110,43 +110,28 @@ LONG WINAPI UnhandledExceptionHandler(EXCEPTION_POINTERS* ExceptionInfo) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-// Get taskbar position and size
-struct TaskbarInfo {
-    int x, y, width, height;
-    bool isHorizontal; // true if taskbar is at top or bottom
-    bool isAtBottom; // true if taskbar is at bottom
-};
-
-TaskbarInfo GetTaskbarInfo() {
-    TaskbarInfo info = {0, 0, 0, 0, true, true};
-    
-    APPBARDATA abd = {0};
-    abd.cbSize = sizeof(APPBARDATA);
-    
-    // Get taskbar position
-    UINT taskbarPos = SHAppBarMessage(ABM_GETTASKBARPOS, &abd);
-    if (taskbarPos) {
-        info.x = abd.rc.left;
-        info.y = abd.rc.top;
-        info.width = abd.rc.right - abd.rc.left;
-        info.height = abd.rc.bottom - abd.rc.top;
-        
-        // Determine if taskbar is horizontal (top or bottom) or vertical (left or right)
-        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-        
-        if (info.width > info.height) {
-            // Horizontal taskbar
-            info.isHorizontal = true;
-            info.isAtBottom = (info.y > screenHeight / 2);
-        } else {
-            // Vertical taskbar
-            info.isHorizontal = false;
-            info.isAtBottom = false; // Vertical taskbars don't have a "bottom" concept for snapping
-        }
+// Helper to get the work area of the monitor containing a specific point or window
+// If hwnd is provided, it takes precedence. If point is provided, it uses that.
+RECT GetMonitorWorkArea(HWND hwnd, POINT* point = nullptr) {
+    HMONITOR hMonitor = nullptr;
+    if (hwnd) {
+        hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    } else if (point) {
+        hMonitor = MonitorFromPoint(*point, MONITOR_DEFAULTTONEAREST);
+    } else {
+        // Fallback to primary
+        POINT zero = {0, 0};
+        hMonitor = MonitorFromPoint(zero, MONITOR_DEFAULTTOPRIMARY);
     }
     
-    return info;
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (GetMonitorInfo(hMonitor, &mi)) {
+        return mi.rcWork;
+    }
+    
+    // Fallback if GetMonitorInfo fails (return full screen of primary)
+    RECT screen = {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    return screen;
 }
 
 // Structure to hold both buffer and sound together (buffer must outlive sound)
@@ -283,6 +268,7 @@ int main() {
     // Create a small, always-on-top window (increased height for UI elements)
     sf::RenderWindow window(sf::VideoMode(sf::Vector2u(200, 260)), "Bongo Cat", 
                            sf::Style::None);
+    window.setFramerateLimit(60); // Optimize performance
     LOG_INFO("Window created");
     
     // Get window handle early for message posting
@@ -409,7 +395,7 @@ int main() {
     }
     
     // Create Bongo Cat with selected pack configuration
-    // Load saved cat size or use default
+    // Use configurable cat size (default 100.0f)
     float catSize = 100.0f;
     std::string catSizeConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.catsize").string();
     
@@ -430,11 +416,37 @@ int main() {
         catSizeFile.close();
     }
     
+    // Function to save cat size to file
+    auto saveCatSize = [&catSizeConfigPath](float size) {
+        std::ofstream file(catSizeConfigPath);
+        if (file.is_open()) {
+            file << size;
+            file.close();
+        }
+    };
+    
+    
+    // Define the visual "floor" within the window (e.g., 200px down)
+    // The window will be positioned so this floor aligns with the taskbar top.
+    // The cat sits on this floor. The UI hangs below it.
+    // Window Height is 260. Anchor is 200. UI is ~30-40px high below anchor.
+    const float ANCHOR_Y = 200.0f; 
+    const float WINDOW_HEIGHT = 260.0f;
+
+    // Position cat: Center horizontally, Bottom aligned with Anchor Line
     float catX = (200.0f - catSize) / 2.0f;
-    float catY = 20.0f; // Position cat near top
-    BongoCat bongoCat(catX, catY, catSize, currentCatPack);
-    bongoCat.setWindowHeight(260.0f); // Set window height so hands position at bottom
-    bongoCat.setHat(currentHat); // Set initial hat
+    
+    // Initial creation
+    BongoCat bongoCat(0.0f, 0.0f, catSize, currentCatPack);
+    bongoCat.setWindowHeight(WINDOW_HEIGHT); 
+    bongoCat.setHat(currentHat); 
+    
+    // Position cat so its bottom touches the anchor line
+    // This allows it to grow upwards
+    float catY = ANCHOR_Y - bongoCat.getBodyDisplayHeight();
+    bongoCat.setPosition(catX, catY);
+
+
     
     // Load saved UI offset or use default
     float uiOffset = 0.0f;
@@ -517,20 +529,124 @@ int main() {
     // Apply initial cat flip
     bongoCat.setFlip(catFlipped);
     
+    // Load saved arm offsets and animation vertical offset
+    // These are slider values (0 = base offset for size, user can adjust from there)
+    float leftArmOffset = 0.0f;
+    float rightArmOffset = 0.0f;
+    float animationVerticalOffset = 0.0f;
+    
+    // Load left arm offset
+    std::string leftArmOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.leftarmoffset").string();
+    std::ifstream leftArmOffsetFile(leftArmOffsetConfigPath);
+    if (leftArmOffsetFile.is_open()) {
+        std::string offsetStr;
+        std::getline(leftArmOffsetFile, offsetStr);
+        if (!offsetStr.empty()) {
+            try {
+                leftArmOffset = std::stof(offsetStr);
+                if (leftArmOffset < -50.0f) leftArmOffset = -50.0f;
+                if (leftArmOffset > 50.0f) leftArmOffset = 50.0f;
+            } catch (...) {
+                leftArmOffset = 0.0f;
+            }
+        }
+        leftArmOffsetFile.close();
+    }
+    
+    // Load right arm offset (check size-specific first)
+    std::string rightArmOffsetConfigPath = (std::filesystem::path(appDataDir) / ("OpenBongo.rightarmoffset_size_" + std::to_string(static_cast<int>(catSize)))).string();
+    std::ifstream rightArmOffsetFile(rightArmOffsetConfigPath);
+    if (rightArmOffsetFile.is_open()) {
+        std::string offsetStr;
+        std::getline(rightArmOffsetFile, offsetStr);
+        if (!offsetStr.empty()) {
+            try {
+                rightArmOffset = std::stof(offsetStr);
+                if (rightArmOffset < -50.0f) rightArmOffset = -50.0f;
+                if (rightArmOffset > 50.0f) rightArmOffset = 50.0f;
+            } catch (...) {
+                rightArmOffset = 0.0f;
+            }
+        }
+        rightArmOffsetFile.close();
+    } else {
+        // Fallback to general preference
+        rightArmOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.rightarmoffset").string();
+        std::ifstream rightArmOffsetFileGeneral(rightArmOffsetConfigPath);
+        if (rightArmOffsetFileGeneral.is_open()) {
+            std::string offsetStr;
+            std::getline(rightArmOffsetFileGeneral, offsetStr);
+            if (!offsetStr.empty()) {
+                try {
+                    rightArmOffset = std::stof(offsetStr);
+                    if (rightArmOffset < -50.0f) rightArmOffset = -50.0f;
+                    if (rightArmOffset > 50.0f) rightArmOffset = 50.0f;
+                } catch (...) {
+                    rightArmOffset = 0.0f;
+                }
+            }
+            rightArmOffsetFileGeneral.close();
+        }
+        // If no saved preference, use 0 (which will apply base offset for size)
+    }
+    
+    // Load animation vertical offset (check size-specific first)
+    std::string animationVerticalOffsetConfigPath = (std::filesystem::path(appDataDir) / ("OpenBongo.animationverticaloffset_size_" + std::to_string(static_cast<int>(catSize)))).string();
+    std::ifstream animationVerticalOffsetFile(animationVerticalOffsetConfigPath);
+    if (animationVerticalOffsetFile.is_open()) {
+        std::string offsetStr;
+        std::getline(animationVerticalOffsetFile, offsetStr);
+        if (!offsetStr.empty()) {
+            try {
+                animationVerticalOffset = std::stof(offsetStr);
+                if (animationVerticalOffset < -100.0f) animationVerticalOffset = -100.0f;
+                if (animationVerticalOffset > 100.0f) animationVerticalOffset = 100.0f;
+            } catch (...) {
+                animationVerticalOffset = 0.0f;
+            }
+        }
+        animationVerticalOffsetFile.close();
+    } else {
+        // Fallback to general preference
+        animationVerticalOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.animationverticaloffset").string();
+        std::ifstream animationVerticalOffsetFileGeneral(animationVerticalOffsetConfigPath);
+        if (animationVerticalOffsetFileGeneral.is_open()) {
+            std::string offsetStr;
+            std::getline(animationVerticalOffsetFileGeneral, offsetStr);
+            if (!offsetStr.empty()) {
+                try {
+                    animationVerticalOffset = std::stof(offsetStr);
+                    if (animationVerticalOffset < -100.0f) animationVerticalOffset = -100.0f;
+                    if (animationVerticalOffset > 100.0f) animationVerticalOffset = 100.0f;
+                } catch (...) {
+                    animationVerticalOffset = 0.0f;
+                }
+            }
+            animationVerticalOffsetFileGeneral.close();
+        }
+        // If no saved preference, use 0 (which will apply base offset for size)
+    }
+    
+    // Apply loaded offsets to cat (0 means base offset for size, user adjustments are relative)
+    bongoCat.setLeftArmOffset(leftArmOffset);
+    bongoCat.setRightArmOffset(rightArmOffset);
+    bongoCat.setAnimationVerticalOffset(animationVerticalOffset);
+    
     // Position window above taskbar on boot
     #ifdef _WIN32
-    TaskbarInfo taskbar = GetTaskbarInfo();
-    sf::Vector2u screenSize = sf::VideoMode::getDesktopMode().size;
-    int initialX = static_cast<int>(screenSize.x) - 220;
-    int initialY;
+    // Position window above taskbar on boot (using work area)
+
+    // Get work area of primary monitor (default for new windows)
+    // Get work area of primary monitor (default for new windows)
+    RECT workArea = GetMonitorWorkArea(nullptr, nullptr);
     
-    if (taskbar.isHorizontal && taskbar.isAtBottom && taskbar.height > 0) {
-        // Position so cat body bottom aligns with taskbar top
-        initialY = taskbar.y - static_cast<int>(bongoCat.getBodyBottomY());
-    } else {
-        // Fallback to bottom-right corner if taskbar not at bottom
-        initialY = static_cast<int>(screenSize.y) - 220;
-    }
+    sf::Vector2u screenSize = sf::VideoMode::getDesktopMode().size;
+    int initialX = workArea.right - 220; // 220px from right edge of work area
+    
+    // Position so the ANCHOR line (Y=200) aligns with the bottom of the work area (top of taskbar)
+    // Formula: WindowTop = WorkAreaBottom - AnchorY
+    // This places the "floor" on the taskbar.
+    int initialY = workArea.bottom - static_cast<int>(ANCHOR_Y);
     
     window.setPosition(sf::Vector2i(initialX, initialY));
     #else
@@ -630,22 +746,35 @@ int main() {
                 #ifdef _WIN32
                 POINT cursorPos;
                 if (GetCursorPos(&cursorPos)) {
-                    TaskbarInfo taskbar = GetTaskbarInfo();
-                    if (taskbar.isHorizontal && taskbar.isAtBottom && taskbar.height > 0) {
-                        // Check if cursor is within taskbar bounds
-                        if (cursorPos.x >= taskbar.x && cursorPos.x <= taskbar.x + taskbar.width &&
-                            cursorPos.y >= taskbar.y && cursorPos.y <= taskbar.y + taskbar.height) {
-                            taskbarWasClicked = true;
-                        } else if (taskbarWasClicked) {
-                            // Taskbar was clicked before, now clicking elsewhere - reposition window above taskbar
-                            sf::Vector2u screenSize = sf::VideoMode::getDesktopMode().size;
+                    // Check if cursor is on the taskbar (outside work area but inside monitor bounds)
+                    HMONITOR hMonitor = MonitorFromPoint(cursorPos, MONITOR_DEFAULTTONEAREST);
+                    MONITORINFO mi = { sizeof(MONITORINFO) };
+                    
+                    if (GetMonitorInfo(hMonitor, &mi)) {
+                        // Check if cursor is outside work area (which implies it's on a docked bar like taskbar)
+                        // but still inside the monitor rect
+                        bool insideMonitor = PtInRect(&mi.rcMonitor, cursorPos);
+                        bool insideWorkArea = PtInRect(&mi.rcWork, cursorPos);
+                        
+                        // If on monitor but not in work area, assume taskbar/dock interaction
+                        // Just checking bottom edge for now as that's where most errors occur
+                        if (insideMonitor && !insideWorkArea) {
+                             taskbarWasClicked = true;
+                        } 
+                        else if (taskbarWasClicked) {
+                            // Was clicking taskbar/outside, now clicked inside work area - snap!
+                            // Snap so the ANCHOR line aligns with work area bottom
+                            // This effectively "lands" the cat on the taskbar
                             int newX = window.getPosition().x;
-                            int newY = taskbar.y - static_cast<int>(bongoCat.getBodyBottomY());
+                            // Re-use logic: WindowTop = WorkAreaBottom - 200
+                            int newY = mi.rcWork.bottom - 200;
+                            
                             window.setPosition(sf::Vector2i(newX, newY));
-                            taskbarWasClicked = false; // Reset flag
+                            taskbarWasClicked = false;
                         }
                     }
                 }
+
                 #endif
                 
                 // Only trigger if button wasn't already pressed (prevent repeat on hold)
@@ -967,9 +1096,49 @@ int main() {
     sf::Vector2i dragOffset;
     
     LOG_INFO("Entering main loop");
+    // Flag to track if window needs to be recreated (for size changes)
+    bool shouldRecreateWindow = false;
+
     int loopIteration = 0;
     
-    while (window.isOpen()) {
+    while (window.isOpen() || shouldRecreateWindow) {
+        // Handle window recreation if requested
+        if (shouldRecreateWindow) {
+            // Get current position to restore it
+            sf::Vector2i currentPos = window.getPosition();
+            
+            // Recreate window
+            window.create(sf::VideoMode(sf::Vector2u(200, 260)), "Bongo Cat", sf::Style::None);
+            window.setFramerateLimit(60);
+            
+            // Restore position
+            window.setPosition(currentPos);
+            
+            // Re-apply window styles
+            #ifdef _WIN32
+            hwnd = window.getNativeHandle();
+            if (hwnd) {
+                // Set extended style to include topmost and layered window
+                LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+                exStyle |= WS_EX_LAYERED | WS_EX_TOPMOST;
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle);
+                
+                // Set window to be always on top
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                
+                // Set transprency color key
+                SetLayeredWindowAttributes(hwnd, RGB(255, 0, 255), 0, LWA_COLORKEY);
+                
+                // Add system menu
+                LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
+                style |= WS_SYSMENU;
+                SetWindowLongPtr(hwnd, GWL_STYLE, style);
+            }
+            #endif
+            
+            shouldRecreateWindow = false;
+            LOG_INFO("Window recreated successfully");
+        }
         loopIteration++;
         
         float deltaTime = clock.restart().asSeconds();
@@ -1172,64 +1341,7 @@ int main() {
                                                     LOG_WARNING("Bonk pack not found: " + packName);
                                                 }
                                             }
-                                        } else if (type == "setCatSize") {
-                                            // Extract size from message
-                                            std::regex sizeRegex("\"size\"\\s*:\\s*(\\d+)");
-                                            std::smatch sizeMatch;
-                                            if (std::regex_search(message, sizeMatch, sizeRegex)) {
-                                                try {
-                                                    float newSize = std::stof(sizeMatch[1].str());
-                                                    if (newSize >= 50.0f && newSize <= 200.0f) {
-                                                        // Get current bottom Y position in screen coordinates before changing size
-                                                        float oldBodyBottomY = bongoCat.getBodyBottomY();
-                                                        sf::Vector2i currentWindowPos = window.getPosition();
-                                                        float oldBottomScreenY = currentWindowPos.y + oldBodyBottomY;
-                                                        
-                                                        // Change cat size
-                                                        catSize = newSize;
-                                                        bongoCat.setSize(catSize);
-                                                        
-                                                        // Recalculate cat position to center it horizontally, keep Y at 20.0f
-                                                        float catX = (200.0f - catSize) / 2.0f;
-                                                        bongoCat.setPosition(catX, 20.0f);
-                                                        
-                                                        // Adjust window position to keep bottom center fixed
-                                                        float newBodyBottomY = bongoCat.getBodyBottomY();
-                                                        float bottomYDelta = newBodyBottomY - oldBodyBottomY;
-                                                        
-                                                        #ifdef _WIN32
-                                                        // Check if we should snap to taskbar or preserve position
-                                                        TaskbarInfo taskbar = GetTaskbarInfo();
-                                                        int newWindowY;
-                                                        
-                                                        if (taskbar.isHorizontal && taskbar.isAtBottom && taskbar.height > 0) {
-                                                            // Snap to taskbar: align cat body bottom with taskbar top
-                                                            newWindowY = taskbar.y - static_cast<int>(newBodyBottomY);
-                                                        } else {
-                                                            // Preserve bottom screen position: adjust window Y by the difference
-                                                            newWindowY = currentWindowPos.y - static_cast<int>(bottomYDelta);
-                                                        }
-                                                        
-                                                        window.setPosition(sf::Vector2i(currentWindowPos.x, newWindowY));
-                                                        #else
-                                                        // On non-Windows, preserve bottom screen position
-                                                        int newWindowY = currentWindowPos.y - static_cast<int>(bottomYDelta);
-                                                        window.setPosition(sf::Vector2i(currentWindowPos.x, newWindowY));
-                                                        #endif
-                                                        
-                                                        // Save size
-                                                        std::ofstream catSizeOutFile(catSizeConfigPath);
-                                                        if (catSizeOutFile.is_open()) {
-                                                            catSizeOutFile << catSize;
-                                                            catSizeOutFile.close();
-                                                            LOG_INFO("Cat size saved: " + std::to_string(catSize));
-                                                        }
-                                                    }
-                                                } catch (...) {
-                                                    LOG_ERROR("Failed to parse cat size");
-                                                }
-                                            }
-                                        } else if (type == "setAccentColor") {
+
                                             // Extract color from message
                                             std::regex colorRegex("\"color\"\\s*:\\s*\"([^\"]+)\"");
                                             std::smatch colorMatch;
@@ -1245,6 +1357,31 @@ int main() {
                                                     accentColorOutFile << color;
                                                     accentColorOutFile.close();
                                                     LOG_INFO("Accent color saved: " + color);
+                                                }
+                                            }
+                                        } else if (type == "setCatSize") {
+                                            // Extract size from message
+                                            std::regex sizeRegex("\"size\"\\s*:\\s*(\\d+)");
+                                            std::smatch sizeMatch;
+                                            if (std::regex_search(message, sizeMatch, sizeRegex)) {
+                                                try {
+                                                    int newSizeInt = std::stoi(sizeMatch[1].str());
+                                                    float newSize = static_cast<float>(newSizeInt);
+                                                    
+                                                    if (newSize >= 50.0f && newSize <= 200.0f) {
+                                                        // Save the new size
+                                                        catSize = newSize;
+                                                        saveCatSize(catSize);
+                                                        LOG_INFO("Saved cat size to: " + std::to_string(catSize));
+                                                        
+                                                        // Send restart message to UI
+                                                        if (settingsWebView && settingsWebView->isWindowValid()) {
+                                                            std::string restartJson = "{\"message\":\"Please restart OpenBongo for this change to take effect.\"}";
+                                                            sendJSONToWebView(*settingsWebView, "restartRequired", restartJson);
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse cat size");
                                                 }
                                             }
                                         } else if (type == "setUIOffset") {
@@ -1331,6 +1468,78 @@ int main() {
                                                     LOG_INFO("Cat flip saved: " + std::string(catFlipped ? "true" : "false"));
                                                 }
                                             }
+                                        } else if (type == "setLeftArmOffset") {
+                                            // Extract left arm offset from message
+                                            std::regex offsetRegex("\"offset\"\\s*:\\s*([+-]?\\d+(?:\\.\\d+)?)");
+                                            std::smatch offsetMatch;
+                                            if (std::regex_search(message, offsetMatch, offsetRegex)) {
+                                                try {
+                                                    float offset = std::stof(offsetMatch[1].str());
+                                                    if (offset >= -50.0f && offset <= 50.0f) {
+                                                        bongoCat.setLeftArmOffset(offset);
+                                                        LOG_INFO("Left arm offset set to: " + std::to_string(offset));
+                                                        
+                                                        // Save left arm offset to file
+                                                        std::string leftArmOffsetConfigPath = (std::filesystem::path(appDataDir) / "OpenBongo.leftarmoffset").string();
+                                                        std::ofstream leftArmOffsetOutFile(leftArmOffsetConfigPath);
+                                                        if (leftArmOffsetOutFile.is_open()) {
+                                                            leftArmOffsetOutFile << offset;
+                                                            leftArmOffsetOutFile.close();
+                                                            LOG_INFO("Left arm offset saved: " + std::to_string(offset));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse left arm offset");
+                                                }
+                                            }
+                                        } else if (type == "setRightArmOffset") {
+                                            // Extract right arm offset from message
+                                            std::regex offsetRegex("\"offset\"\\s*:\\s*([+-]?\\d+(?:\\.\\d+)?)");
+                                            std::smatch offsetMatch;
+                                            if (std::regex_search(message, offsetMatch, offsetRegex)) {
+                                                try {
+                                                    float offset = std::stof(offsetMatch[1].str());
+                                                    if (offset >= -50.0f && offset <= 50.0f) {
+                                                        bongoCat.setRightArmOffset(offset);
+                                                        LOG_INFO("Right arm offset set to: " + std::to_string(offset));
+                                                        
+                                                        // Save right arm offset to file (size-specific)
+                                                        std::string rightArmOffsetConfigPath = (std::filesystem::path(appDataDir) / ("OpenBongo.rightarmoffset_size_" + std::to_string(static_cast<int>(catSize)))).string();
+                                                        std::ofstream rightArmOffsetOutFile(rightArmOffsetConfigPath);
+                                                        if (rightArmOffsetOutFile.is_open()) {
+                                                            rightArmOffsetOutFile << offset;
+                                                            rightArmOffsetOutFile.close();
+                                                            LOG_INFO("Right arm offset saved for size " + std::to_string(static_cast<int>(catSize)) + ": " + std::to_string(offset));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse right arm offset");
+                                                }
+                                            }
+                                        } else if (type == "setAnimationVerticalOffset") {
+                                            // Extract animation vertical offset from message
+                                            std::regex offsetRegex("\"offset\"\\s*:\\s*([+-]?\\d+(?:\\.\\d+)?)");
+                                            std::smatch offsetMatch;
+                                            if (std::regex_search(message, offsetMatch, offsetRegex)) {
+                                                try {
+                                                    float offset = std::stof(offsetMatch[1].str());
+                                                    if (offset >= -100.0f && offset <= 100.0f) {
+                                                        bongoCat.setAnimationVerticalOffset(offset);
+                                                        LOG_INFO("Animation vertical offset set to: " + std::to_string(offset));
+                                                        
+                                                        // Save animation vertical offset to file (size-specific)
+                                                        std::string animationVerticalOffsetConfigPath = (std::filesystem::path(appDataDir) / ("OpenBongo.animationverticaloffset_size_" + std::to_string(static_cast<int>(catSize)))).string();
+                                                        std::ofstream animationVerticalOffsetOutFile(animationVerticalOffsetConfigPath);
+                                                        if (animationVerticalOffsetOutFile.is_open()) {
+                                                            animationVerticalOffsetOutFile << offset;
+                                                            animationVerticalOffsetOutFile.close();
+                                                            LOG_INFO("Animation vertical offset saved for size " + std::to_string(static_cast<int>(catSize)) + ": " + std::to_string(offset));
+                                                        }
+                                                    }
+                                                } catch (...) {
+                                                    LOG_ERROR("Failed to parse animation vertical offset");
+                                                }
+                                            }
                                         } else if (type == "shutdown") {
                                             // Shutdown the entire program
                                             LOG_INFO("Shutdown requested from UI");
@@ -1403,8 +1612,10 @@ int main() {
                                     sendBonkPackList(*settingsWebView, availableBonkPacks);
                                     
                                     // Send initial cat size
-                                    std::string catSizeJson = "{\"size\":" + std::to_string(static_cast<int>(catSize)) + "}";
-                                    sendJSONToWebView(*settingsWebView, "catSize", catSizeJson);
+                                    std::string sizeJson = "{\"size\":" + std::to_string(static_cast<int>(catSize)) + "}";
+                                    sendJSONToWebView(*settingsWebView, "catSize", sizeJson);
+                                    
+
                                     
                                     // Send initial UI offset
                                     std::string uiOffsetJson = "{\"offset\":" + std::to_string(static_cast<int>(uiOffset)) + "}";
@@ -1438,9 +1649,10 @@ int main() {
                                     
                                     std::string accentColorJson = "{\"color\":\"" + escapeJSON(accentColor) + "\"}";
                                     sendJSONToWebView(*settingsWebView, "accentColor", accentColorJson);
+                                    
+
                                 }
                                 
-                                // Show window
                                 settingsWebView->showWindow();
                                 settingsWindowOpen = true;
                                 LOG_INFO("Settings WebView window shown");
@@ -1487,20 +1699,17 @@ int main() {
                         int newX = mouseMoved->position.x + window.getPosition().x - dragOffset.x;
                         int newY = mouseMoved->position.y + window.getPosition().y - dragOffset.y;
                         
-                        // Get taskbar info
-                        TaskbarInfo taskbar = GetTaskbarInfo();
+                        // Get work area for the window/monitor
+                        RECT workArea = GetMonitorWorkArea(window.getNativeHandle(), nullptr);
                         
-                        // Always keep window above the taskbar (only for bottom taskbar)
-                        if (taskbar.isHorizontal && taskbar.isAtBottom && taskbar.height > 0) {
-                            // Get the cat body's bottom Y position in screen coordinates
-                            // catY is relative to window, so add window Y position
-                            float catBodyBottomScreenY = newY + bongoCat.getBodyBottomY();
-                            
-                            // Always prevent window from going below taskbar - snap if at or below taskbar top
-                            if (catBodyBottomScreenY >= taskbar.y) {
-                                // Calculate new window Y so that cat body bottom aligns with taskbar top
-                                newY = taskbar.y - static_cast<int>(bongoCat.getBodyBottomY());
-                            }
+                        // Check if the ANCHOR LINE (newY + 200) effectively touches or crosses the bottom
+                        // Actually, let's essentially snap the ANCHOR line to the bottom.
+                        // Anchor is at Y=200 relative to window top.
+                        // Screen Y of Anchor = newY + 200.
+                        
+                        // If (Screen Y of Anchor) >= WorkAreaBottom, then Snap.
+                        if ((newY + 200) >= workArea.bottom) {
+                             newY = workArea.bottom - 200;
                         }
                         
                         window.setPosition(sf::Vector2i(newX, newY));

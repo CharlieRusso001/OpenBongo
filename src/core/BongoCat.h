@@ -16,11 +16,20 @@ public:
     void setPosition(float x, float y);
     sf::Vector2f getPosition() const;
     float getBodyBottomY() const; // Get the bottom Y position of the cat body
+    float getBodyDisplayHeight() const; // Get the display height of the cat body
     void setWindowHeight(float windowHeight); // Set window height for positioning hands at bottom
     void setConfig(const CatPackConfig& config); // Change cat pack configuration
     void setHat(const HatConfig& hat); // Change hat configuration
     void setSize(float newSize); // Change cat size
     void setFlip(bool flipped); // Flip cat horizontally (mirror on vertical line)
+    void setLeftArmOffset(float offsetX); // Adjust left arm horizontal offset (negative = left, positive = right)
+    void setRightArmOffset(float offsetX); // Adjust right arm horizontal offset (negative = left, positive = right) - 0 means base offset for size
+    void setAnimationVerticalOffset(float offsetY); // Adjust how much arms move down when typing - 0 means base offset for size
+    
+private:
+    // Get base offsets for current size (these are applied when slider is at 0)
+    float getBaseRightArmOffset() const;
+    float getBaseAnimationVerticalOffset() const;
     
 private:
     sf::Vector2f position;
@@ -75,6 +84,11 @@ private:
     
     // Flip state
     bool isFlipped;
+    
+    // User-adjustable arm offsets
+    float leftArmOffsetX;
+    float rightArmOffsetX;
+    float animationVerticalOffset;
     
     void updateAnimation(float deltaTime);
     void updateArmPositions();
