@@ -103,11 +103,6 @@ bool WebViewWindow::initialize(void* parentHwnd, const std::string& htmlPath) {
         std::string url = "http://localhost:" + std::to_string(m_serverPort) + "/";
         webview_navigate(m_webview, url.c_str());
         
-        // Inject build version info
-        std::string buildDate = __DATE__;
-        std::string buildTime = __TIME__;
-        std::string versionScript = "setTimeout(function() { try { var el = document.getElementById('version-display'); if(el) el.innerText = 'Build: " + buildDate + " " + buildTime + "'; } catch(e) {} }, 1000);"; // Delay slightly to ensure DOM is ready
-        webview_dispatch(m_webview, evalScriptCallback, new std::string(versionScript));
         
         m_initialized = true;
         return true;

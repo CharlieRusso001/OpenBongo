@@ -125,6 +125,14 @@
                 </div>
                 <div class="panel-body">
                     <div class="settings-content">
+                        <!-- View Wrapped Button (shown in December) -->
+                        <div class="setting-item wrapped-top-item" id="wrapped-top-item" style="display: none;">
+                            <div class="setting-label">
+                                <span class="setting-icon">🎁</span>
+                                <span class="setting-text">View Your Year in Review</span>
+                            </div>
+                            <button id="wrapped-top-btn" class="wrapped-top-button">View Wrapped</button>
+                        </div>
                         <div class="setting-item shutdown-item">
                             <div class="setting-label">
                                 <span class="setting-icon">⏻</span>
@@ -270,7 +278,6 @@
         </div>
     </div>
 
-    <div id="version-display"></div>
 
     <!-- Restart Required Modal -->
     <div id="restart-modal" class="modal-overlay" style="display: none;">
@@ -279,6 +286,70 @@
             <h2 class="modal-title">Restart Required</h2>
             <p class="modal-message">Please restart OpenBongo for this change to take effect.</p>
             <button class="modal-button" onclick="closeRestartModal()">OK</button>
+        </div>
+    </div>
+
+    <!-- Wrapped Modal -->
+    <div id="wrapped-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content wrapped-content">
+            <div class="wrapped-background">
+                <canvas id="wrapped-canvas"></canvas>
+            </div>
+            <div class="wrapped-slides-container">
+                <!-- Page 1: Total Keys Pressed -->
+                <div class="wrapped-slide active" data-slide="0">
+                    <div class="wrapped-slide-content">
+                        <div class="wrapped-slide-icon">KEYBOARD</div>
+                        <h2 class="wrapped-slide-title">Total Keys Pressed</h2>
+                        <div class="wrapped-big-number" id="wrapped-total-keys-animated">0</div>
+                        <div class="wrapped-slide-subtitle">You've pressed <span id="wrapped-total-keys-text">0</span> keys this year!</div>
+                    </div>
+                </div>
+                
+                <!-- Page 2: Most Pressed Keys -->
+                <div class="wrapped-slide" data-slide="1">
+                    <div class="wrapped-slide-content">
+                        <div class="wrapped-slide-icon">TOP KEYS</div>
+                        <h2 class="wrapped-slide-title">Most Pressed Keys</h2>
+                        <div class="wrapped-top-inputs-list" id="wrapped-top-inputs-list"></div>
+                    </div>
+                </div>
+                
+                <!-- Page 3: Total Minutes Open -->
+                <div class="wrapped-slide" data-slide="2">
+                    <div class="wrapped-slide-content">
+                        <div class="wrapped-slide-icon">TIME</div>
+                        <h2 class="wrapped-slide-title">Total Minutes With OpenBongo</h2>
+                        <div class="wrapped-big-number" id="wrapped-total-minutes-animated">0</div>
+                        <div class="wrapped-slide-subtitle">You've spent <span id="wrapped-total-minutes-text">0</span> minutes with OpenBongo open!</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="wrapped-navigation">
+                <button class="wrapped-nav-btn" id="wrapped-prev-btn" onclick="previousWrappedSlide()">← Previous</button>
+                <div class="wrapped-dots">
+                    <span class="wrapped-dot active" data-slide="0"></span>
+                    <span class="wrapped-dot" data-slide="1"></span>
+                    <span class="wrapped-dot" data-slide="2"></span>
+                </div>
+                <button class="wrapped-nav-btn" id="wrapped-next-btn" onclick="nextWrappedSlide()">Next →</button>
+            </div>
+            
+            <button class="wrapped-close-btn" onclick="closeWrappedModal()">Close</button>
+        </div>
+    </div>
+
+    <!-- Year-End Wrapped Popup -->
+    <div id="year-end-popup" class="year-end-popup" style="display: none;">
+        <div class="year-end-popup-content">
+            <div class="year-end-popup-icon">WRAPPED</div>
+            <div class="year-end-popup-text">
+                <div class="year-end-popup-title">Your OpenBongo Wrapped is Ready!</div>
+                <div class="year-end-popup-subtitle">See your year in typing stats</div>
+            </div>
+            <button class="year-end-popup-btn" onclick="openWrappedFromPopup()">View Wrapped</button>
+            <button class="year-end-popup-close" onclick="closeYearEndPopup()">×</button>
         </div>
     </div>
 

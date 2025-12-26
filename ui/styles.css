@@ -963,6 +963,72 @@ body.dark-mode .sfx-section-title {
 }
 
 /* Shutdown Button */
+/* Wrapped Top Item (shown in December) */
+.wrapped-top-item {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    border: 2px solid #ff5252;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+    transition: all 0.3s ease;
+}
+
+.wrapped-top-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(255, 107, 107, 0.4);
+}
+
+.wrapped-top-item .setting-label {
+    color: white;
+    font-weight: 600;
+}
+
+.wrapped-top-item .setting-icon {
+    font-size: 24px;
+    margin-right: 12px;
+}
+
+.wrapped-top-button {
+    background: white;
+    color: #ff6b6b;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.wrapped-top-button:hover {
+    background: #fff5f5;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.wrapped-top-button:active {
+    transform: scale(0.98);
+}
+
+body.dark-mode .wrapped-top-item {
+    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
+    border-color: #c62828;
+}
+
+body.dark-mode .wrapped-top-button {
+    background: #ffffff;
+    color: #d32f2f;
+}
+
+body.dark-mode .wrapped-top-button:hover {
+    background: #f5f5f5;
+}
+
 .shutdown-item {
     border-color: #ff4444 !important;
 }
@@ -1008,20 +1074,6 @@ body.dark-mode .shutdown-button:active {
     background: #cc3333;
 }
 
-/* Version display styling */
-#version-display {
-    position: fixed;
-    bottom: 5px;
-    right: 5px;
-    font-size: 10px;
-    color: #888;
-    background-color: rgba(0, 0, 0, 0.5);
-    padding: 2px 5px;
-    border-radius: 3px;
-    pointer-events: none;
-    z-index: 1000;
-    font-family: monospace;
-}
 
 /* Custom Restart Modal */
 .modal-overlay {
@@ -1111,5 +1163,496 @@ body.dark-mode .modal-title {
 }
 
 body.dark-mode .modal-message {
+    color: #cccccc;
+}
+
+/* Wrapped Button */
+.wrapped-button {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.wrapped-button:hover {
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.wrapped-button:active {
+    transform: translateY(0);
+}
+
+/* Wrapped Modal */
+.wrapped-content {
+    max-width: 700px;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 9999;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.wrapped-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: 20px;
+    overflow: hidden;
+}
+
+#wrapped-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.wrapped-slides-container {
+    position: relative;
+    z-index: 1;
+}
+
+.wrapped-navigation {
+    position: relative;
+    z-index: 2;
+}
+
+.wrapped-close-btn {
+    position: relative;
+    z-index: 3;
+}
+
+body.dark-mode .wrapped-content {
+    background: rgba(26, 26, 26, 0.95);
+}
+
+.wrapped-slides-container {
+    position: relative;
+    flex: 1;
+    min-height: 400px;
+    overflow: hidden;
+    z-index: 1;
+}
+
+.wrapped-slide {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wrapped-slide.active {
+    opacity: 1;
+    transform: translateX(0);
+    position: relative;
+}
+
+.wrapped-slide.prev {
+    transform: translateX(-100%);
+}
+
+.wrapped-slide-content {
+    text-align: center;
+    padding: 40px;
+    width: 100%;
+}
+
+.wrapped-slide-icon {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    animation: bounceIn 0.6s ease-out;
+    color: #667eea;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+}
+
+.wrapped-slide-title {
+    font-size: 32px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0 0 30px 0;
+    animation: fadeInUp 0.6s ease-out 0.2s both;
+}
+
+.wrapped-big-number {
+    font-size: 72px;
+    font-weight: 700;
+    color: #667eea;
+    margin: 30px 0;
+    animation: scaleIn 0.8s ease-out 0.4s both;
+    text-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
+}
+
+.wrapped-slide-subtitle {
+    font-size: 18px;
+    color: #666;
+    margin-top: 20px;
+    animation: fadeInUp 0.6s ease-out 0.6s both;
+}
+
+.wrapped-top-inputs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 30px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.wrapped-top-input-item {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    border-radius: 12px;
+    border: 2px solid rgba(102, 126, 234, 0.2);
+    transition: all 0.3s ease;
+    animation: slideInRight 0.5s ease-out both;
+    opacity: 0;
+}
+
+.wrapped-top-input-item:hover {
+    transform: translateX(10px);
+    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+    border-color: #667eea;
+}
+
+.wrapped-input-rank {
+    font-size: 24px;
+    font-weight: 700;
+    color: #667eea;
+    min-width: 50px;
+}
+
+.wrapped-input-name {
+    flex: 1;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1a1a;
+    text-align: left;
+}
+
+.wrapped-input-count {
+    font-size: 24px;
+    font-weight: 700;
+    color: #667eea;
+}
+
+.wrapped-navigation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-top: 2px solid rgba(102, 126, 234, 0.1);
+    margin-top: 20px;
+}
+
+.wrapped-nav-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.wrapped-nav-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.wrapped-nav-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.wrapped-dots {
+    display: flex;
+    gap: 10px;
+}
+
+.wrapped-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.wrapped-dot.active {
+    background: #667eea;
+    transform: scale(1.2);
+}
+
+.wrapped-close-btn {
+    margin-top: 30px;
+    width: 100%;
+    z-index: 10;
+    position: relative;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 16px 32px;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: block;
+    visibility: visible;
+    opacity: 1;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.wrapped-close-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+}
+
+.wrapped-close-btn:active {
+    transform: translateY(-1px);
+}
+
+@keyframes bounceIn {
+    0% {
+        transform: scale(0);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.1);
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+body.dark-mode .wrapped-slide-subtitle {
+    color: #cccccc;
+}
+
+body.dark-mode .wrapped-top-input-item {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+    border-color: rgba(102, 126, 234, 0.3);
+}
+
+body.dark-mode .wrapped-input-name {
+    color: #ffffff;
+}
+
+body.dark-mode .wrapped-dot {
+    background: #3a3a3a;
+}
+
+/* Year-End Popup */
+.year-end-popup {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    animation: slideUpIn 0.5s ease-out;
+}
+
+.year-end-popup-content {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px 30px;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    min-width: 400px;
+    max-width: 600px;
+    position: relative;
+}
+
+.year-end-popup-icon {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.9);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+}
+
+.year-end-popup-text {
+    flex: 1;
+}
+
+.year-end-popup-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.year-end-popup-subtitle {
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.year-end-popup-btn {
+    background: white;
+    color: #667eea;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.year-end-popup-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+    background: #f0f0f0;
+}
+
+.year-end-popup-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.year-end-popup-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+@keyframes slideUpIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+@keyframes bounce {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+body.dark-mode .year-end-popup-content {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+body.dark-mode .wrapped-stat-card {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%);
+    border-color: rgba(102, 126, 234, 0.3);
+}
+
+body.dark-mode .wrapped-stat-label {
+    color: #cccccc;
+}
+
+body.dark-mode .wrapped-section-title {
+    color: #ffffff;
+}
+
+body.dark-mode .wrapped-key-item {
+    background: #2a2a2a;
+    border-color: #3a3a3a;
+}
+
+body.dark-mode .wrapped-key-item:hover {
+    background: #3a3a3a;
+    border-color: #667eea;
+}
+
+body.dark-mode .wrapped-key-name {
+    color: #ffffff;
+}
+
+body.dark-mode .wrapped-key-count {
     color: #cccccc;
 }

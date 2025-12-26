@@ -286,6 +286,9 @@ function initializeUI() {
         });
     }
 
+    // Check if we're in the last week of the year and show popup
+    checkAndShowYearEndPopup();
+
     // Setup particle effects toggle
     const particleEffectsToggle = document.getElementById('particle-effects-toggle');
     if (particleEffectsToggle) {
@@ -338,6 +341,28 @@ function initializeUI() {
             sfxVolumeValue.textContent = volume + '%';
             sendMessage('setSFXVolume', { volume });
             saveSFXVolumePreference();
+        });
+    }
+
+    // Setup wrapped button (shown in December)
+    const wrappedTopItem = document.getElementById('wrapped-top-item');
+    const wrappedTopBtn = document.getElementById('wrapped-top-btn');
+    if (wrappedTopItem && wrappedTopBtn) {
+        // Check if it's December (month 11, 0-indexed)
+        const now = new Date();
+        const isDecember = now.getMonth() === 11; // December is month 11 (0-indexed)
+        
+        if (isDecember) {
+            wrappedTopItem.style.display = 'flex';
+        } else {
+            wrappedTopItem.style.display = 'none';
+        }
+        
+        // Setup click handler
+        wrappedTopBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            requestWrappedStats();
         });
     }
 
@@ -632,6 +657,21 @@ function handleMessage(message) {
             const bonkPacks = Array.isArray(data) ? data : [];
             console.log('Updating bonk pack list with', bonkPacks.length, 'packs');
             updateBonkPackList(bonkPacks);
+            break;
+        case 'wrappedStats':
+            console.log('Received wrappedStats message:', data);
+            if (data) {
+                // Data might be a string JSON or already parsed object
+                try {
+                    const statsData = typeof data === 'string' ? JSON.parse(data) : data;
+                    console.log('Parsed wrapped stats:', statsData);
+                    displayWrappedStats(statsData);
+                } catch (e) {
+                    console.error('Failed to parse wrapped stats:', e, data);
+                }
+            } else {
+                console.error('No data received in wrappedStats message');
+            }
             break;
         default:
             console.log('Unknown message type:', type);
@@ -1687,3 +1727,342 @@ function updateSizeButtons(size) {
         }
     });
 }
+
+function requestWrappedStats() {
+    console.log('Requesting wrapped stats...');
+    sendMessage('getWrappedStats');
+}
+
+let currentWrappedSlide = 0;
+let wrappedStatsData = null;
+
+function displayWrappedStats(stats) {
+    try {
+        console.log('displayWrappedStats called with:', stats);
+        const statsObj = typeof stats === 'string' ? JSON.parse(stats) : stats;
+        console.log('Parsed stats object:', statsObj);
+        wrappedStatsData = statsObj;
+        
+        // Initialize background animation
+        initWrappedBackground();
+        
+        // Animate total keys
+        animateNumber('wrapped-total-keys-animated', statsObj.totalInputs || statsObj.totalKeys || 0, 0);
+        const totalKeysTextEl = document.getElementById('wrapped-total-keys-text');
+        if (totalKeysTextEl) {
+            totalKeysTextEl.textContent = (statsObj.totalInputs || statsObj.totalKeys || 0).toLocaleString();
+        }
+        
+        // Update top inputs list (keys + mouse clicks)
+        const topInputsListEl = document.getElementById('wrapped-top-inputs-list');
+        if (topInputsListEl && statsObj.topInputs && Array.isArray(statsObj.topInputs)) {
+            topInputsListEl.innerHTML = '';
+            statsObj.topInputs.forEach((inputData, index) => {
+                const inputItem = document.createElement('div');
+                inputItem.className = 'wrapped-top-input-item';
+                inputItem.style.animationDelay = `${index * 0.1}s`;
+                inputItem.innerHTML = `
+                    <div class="wrapped-input-rank">#${index + 1}</div>
+                    <div class="wrapped-input-name">${inputData.key}</div>
+                    <div class="wrapped-input-count">${inputData.count.toLocaleString()}</div>
+                `;
+                topInputsListEl.appendChild(inputItem);
+            });
+        }
+        
+        // Animate total minutes
+        animateNumber('wrapped-total-minutes-animated', statsObj.totalMinutesOpen || 0, 0);
+        const totalMinutesTextEl = document.getElementById('wrapped-total-minutes-text');
+        if (totalMinutesTextEl) {
+            totalMinutesTextEl.textContent = Math.floor(statsObj.totalMinutesOpen || 0).toLocaleString();
+        }
+        
+        // Reset to first slide
+        currentWrappedSlide = 0;
+        showWrappedSlide(0);
+        
+        // Show modal
+        const modal = document.getElementById('wrapped-modal');
+        if (modal) {
+            console.log('Showing wrapped modal');
+            modal.style.display = 'flex';
+        } else {
+            console.error('Wrapped modal element not found!');
+        }
+    } catch (e) {
+        console.error('Failed to display wrapped stats:', e, stats);
+    }
+}
+
+function initWrappedBackground() {
+    const canvas = document.getElementById('wrapped-canvas');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    let animationId;
+    
+    // Set canvas size
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    // Wave and dot parameters
+    const waves = [];
+    const dots = [];
+    const colors = [
+        { r: 102, g: 126, b: 234 }, // Purple
+        { r: 118, g: 75, b: 162 },  // Dark purple
+        { r: 255, g: 107, b: 107 }, // Red
+        { r: 107, g: 185, b: 240 }, // Blue
+        { r: 255, g: 206, b: 84 },  // Yellow
+        { r: 72, g: 219, b: 251 }   // Cyan
+    ];
+    
+    // Create waves
+    for (let i = 0; i < 3; i++) {
+        waves.push({
+            amplitude: 30 + Math.random() * 40,
+            frequency: 0.01 + Math.random() * 0.02,
+            speed: 0.02 + Math.random() * 0.03,
+            y: canvas.height * (0.3 + i * 0.2),
+            color: colors[Math.floor(Math.random() * colors.length)],
+            phase: Math.random() * Math.PI * 2
+        });
+    }
+    
+    // Create dots
+    for (let i = 0; i < 50; i++) {
+        dots.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            radius: 2 + Math.random() * 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            speedX: (Math.random() - 0.5) * 0.5,
+            speedY: (Math.random() - 0.5) * 0.5,
+            opacity: 0.3 + Math.random() * 0.4
+        });
+    }
+    
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw waves
+        waves.forEach((wave, index) => {
+            ctx.beginPath();
+            ctx.moveTo(0, wave.y);
+            
+            for (let x = 0; x < canvas.width; x += 5) {
+                const y = wave.y + Math.sin(x * wave.frequency + wave.phase) * wave.amplitude;
+                ctx.lineTo(x, y);
+            }
+            
+            wave.phase += wave.speed;
+            
+            const gradient = ctx.createLinearGradient(0, wave.y - wave.amplitude, 0, wave.y + wave.amplitude);
+            gradient.addColorStop(0, `rgba(${wave.color.r}, ${wave.color.g}, ${wave.color.b}, 0.3)`);
+            gradient.addColorStop(0.5, `rgba(${wave.color.r}, ${wave.color.g}, ${wave.color.b}, 0.1)`);
+            gradient.addColorStop(1, `rgba(${wave.color.r}, ${wave.color.g}, ${wave.color.b}, 0)`);
+            
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            ctx.fillStyle = gradient;
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.lineTo(0, canvas.height);
+            ctx.closePath();
+            ctx.fill();
+        });
+        
+        // Draw dots
+        dots.forEach(dot => {
+            dot.x += dot.speedX;
+            dot.y += dot.speedY;
+            
+            // Wrap around edges
+            if (dot.x < 0) dot.x = canvas.width;
+            if (dot.x > canvas.width) dot.x = 0;
+            if (dot.y < 0) dot.y = canvas.height;
+            if (dot.y > canvas.height) dot.y = 0;
+            
+            ctx.beginPath();
+            ctx.arc(dot.x, dot.y, dot.radius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${dot.color.r}, ${dot.color.g}, ${dot.color.b}, ${dot.opacity})`;
+            ctx.fill();
+        });
+        
+        animationId = requestAnimationFrame(animate);
+    }
+    
+    animate();
+    
+    // Store cleanup function
+    canvas._cleanup = () => {
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+        }
+        window.removeEventListener('resize', resizeCanvas);
+    };
+}
+
+function animateNumber(elementId, targetValue, decimals = 0) {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    
+    const duration = 2000; // 2 seconds
+    const startValue = 0;
+    const startTime = performance.now();
+    
+    function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Easing function (ease-out)
+        const easeOut = 1 - Math.pow(1 - progress, 3);
+        const currentValue = startValue + (targetValue - startValue) * easeOut;
+        
+        if (decimals === 0) {
+            element.textContent = Math.floor(currentValue).toLocaleString();
+        } else {
+            element.textContent = currentValue.toFixed(decimals);
+        }
+        
+        if (progress < 1) {
+            requestAnimationFrame(update);
+        } else {
+            if (decimals === 0) {
+                element.textContent = Math.floor(targetValue).toLocaleString();
+            } else {
+                element.textContent = targetValue.toFixed(decimals);
+            }
+        }
+    }
+    
+    requestAnimationFrame(update);
+}
+
+function showWrappedSlide(slideIndex) {
+    const slides = document.querySelectorAll('.wrapped-slide');
+    const dots = document.querySelectorAll('.wrapped-dot');
+    const closeBtn = document.querySelector('.wrapped-close-btn');
+    const navDiv = document.querySelector('.wrapped-navigation');
+    
+    slides.forEach((slide, index) => {
+        if (index === slideIndex) {
+            slide.classList.add('active');
+        } else {
+            slide.classList.remove('active');
+        }
+    });
+    
+    dots.forEach((dot, index) => {
+        if (index === slideIndex) {
+            dot.classList.add('active');
+        } else {
+            dot.classList.remove('active');
+        }
+    });
+    
+    // Update navigation buttons
+    const prevBtn = document.getElementById('wrapped-prev-btn');
+    const nextBtn = document.getElementById('wrapped-next-btn');
+    if (prevBtn) prevBtn.disabled = slideIndex === 0;
+    if (nextBtn) nextBtn.disabled = slideIndex === slides.length - 1;
+    
+    // Show/hide navigation and close button based on slide
+    if (slideIndex === slides.length - 1) {
+        // Last slide - hide navigation, show close button prominently
+        if (navDiv) navDiv.style.display = 'none';
+        if (closeBtn) {
+            closeBtn.style.display = 'block';
+            closeBtn.style.marginTop = '30px';
+        }
+    } else {
+        // Not last slide - show navigation, hide close button
+        if (navDiv) navDiv.style.display = 'flex';
+        if (closeBtn) closeBtn.style.display = 'none';
+    }
+    
+    currentWrappedSlide = slideIndex;
+}
+
+function nextWrappedSlide() {
+    const slides = document.querySelectorAll('.wrapped-slide');
+    if (currentWrappedSlide < slides.length - 1) {
+        showWrappedSlide(currentWrappedSlide + 1);
+    }
+}
+
+function previousWrappedSlide() {
+    if (currentWrappedSlide > 0) {
+        showWrappedSlide(currentWrappedSlide - 1);
+    }
+}
+
+function closeWrappedModal() {
+    const modal = document.getElementById('wrapped-modal');
+    const canvas = document.getElementById('wrapped-canvas');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+    // Cleanup animation
+    if (canvas && canvas._cleanup) {
+        canvas._cleanup();
+    }
+    // Reset slide to first
+    currentWrappedSlide = 0;
+    showWrappedSlide(0);
+}
+
+function checkAndShowYearEndPopup() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const lastDayOfYear = new Date(year, 11, 31); // December 31
+    const lastWeekStart = new Date(lastDayOfYear);
+    lastWeekStart.setDate(lastDayOfYear.getDate() - 6); // 7 days before end of year (last week)
+    
+    // Check if we're in the last week of the year (Dec 25 - Dec 31)
+    if (now >= lastWeekStart && now <= lastDayOfYear) {
+        // Check if user has dismissed it this year
+        const dismissedKey = `openBongo_wrappedPopup_dismissed_${year}`;
+        const dismissed = localStorage.getItem(dismissedKey);
+        
+        if (!dismissed) {
+            const popup = document.getElementById('year-end-popup');
+            if (popup) {
+                popup.style.display = 'flex';
+                // Auto-hide after 10 seconds
+                setTimeout(() => {
+                    if (popup.style.display === 'flex') {
+                        popup.style.display = 'none';
+                    }
+                }, 10000);
+            }
+        }
+    }
+}
+
+function openWrappedFromPopup() {
+    const popup = document.getElementById('year-end-popup');
+    if (popup) {
+        popup.style.display = 'none';
+    }
+    requestWrappedStats();
+}
+
+function closeYearEndPopup() {
+    const popup = document.getElementById('year-end-popup');
+    if (popup) {
+        popup.style.display = 'none';
+        // Remember dismissal for this year
+        const now = new Date();
+        const year = now.getFullYear();
+        const dismissedKey = `openBongo_wrappedPopup_dismissed_${year}`;
+        localStorage.setItem(dismissedKey, 'true');
+    }
+}
+
+

@@ -3,7 +3,9 @@
 
 #include <string>
 #include <map>
+#include <vector>
 #include <mutex>
+#include <ctime>
 
 class BongoStats {
 public:
@@ -25,7 +27,7 @@ public:
     void saveStats();
     
     // Load stats from file
-    void loadStats();
+    void loadStats(bool mergeWithCurrent = false);
     
     // Get count for a specific key (returns key name or "Unknown")
     int getKeyCount(unsigned int keyCode) const;
@@ -33,7 +35,32 @@ public:
     // Get count for a mouse button
     int getMouseButtonCount(const std::string& buttonName) const;
     
+    // Get all key stats for wrapped
+    std::map<std::string, int> getAllKeyStats() const;
+    
+    // Get total key presses
+    int getTotalKeyPresses() const;
+    
+    // Get keys per minute (average)
+    double getKeysPerMinute() const;
+    
+    // Get words per minute (estimated, 5 chars = 1 word)
+    double getWordsPerMinute() const;
+    
+    // Get wrapped stats for current year
+    std::string getWrappedStatsJSON() const;
+    
+    // Get total minutes open
+    double getTotalMinutesOpen() const;
+    
+    // Set app start time (called when app starts)
+    void setAppStartTime(time_t startTime);
+    
+    // Update total minutes (called periodically or on shutdown)
+    void updateTotalMinutes();
+    
     ~BongoStats() {
+        updateTotalMinutes();
         saveStats();
     }
     
@@ -45,6 +72,11 @@ private:
     std::string statsFilePath;
     std::map<unsigned int, int> keyPressCounts; // keyCode -> count
     std::map<std::string, int> mouseButtonCounts; // "LEFT", "RIGHT", "MIDDLE" -> count
+    std::vector<time_t> keyPressTimestamps; // Timestamps for KPM/WPM calculation
+    time_t firstKeyPressTime; // First key press time
+    time_t lastKeyPressTime; // Last key press time
+    time_t appStartTime; // When the app started (for total minutes tracking)
+    double totalMinutesOpen; // Total minutes the app has been open (accumulated)
     mutable std::mutex statsMutex; // Thread-safe access
     
     // Convert Windows virtual key code to readable name

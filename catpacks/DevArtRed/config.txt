@@ -20,7 +20,7 @@ leftArmOffsetY=0.0
 leftArmSpacing=1.1
 
 # Right arm offsets
-rightArmOffsetX=40.0
+rightArmOffsetX=55.0
 rightArmOffsetY=0.0
 rightArmSpacing=1.0
 

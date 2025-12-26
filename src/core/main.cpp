@@ -232,9 +232,10 @@ int main() {
     }
     
     // Initialize stats tracker - save stats file in stats folder
-    std::string statsPath = (std::filesystem::path(statsDirPath) / "BongoStats.log").string();
+    std::string statsPath = (std::filesystem::path(statsDirPath) / "BongoStats.json").string();
     try {
         BongoStats::getInstance().initialize(statsPath);
+        // appStartTime is already set in initialize() after loading stats
     } catch (const std::exception& e) {
         LOG_ERROR("Failed to initialize stats tracker: " + std::string(e.what()));
     } catch (...) {
@@ -1098,10 +1099,11 @@ int main() {
     LOG_INFO("Entering main loop");
     // Flag to track if window needs to be recreated (for size changes)
     bool shouldRecreateWindow = false;
+    bool shouldExit = false; // Flag to force exit from main loop
 
     int loopIteration = 0;
     
-    while (window.isOpen() || shouldRecreateWindow) {
+    while ((window.isOpen() || shouldRecreateWindow) && !shouldExit) {
         // Handle window recreation if requested
         if (shouldRecreateWindow) {
             // Get current position to restore it
@@ -1154,14 +1156,17 @@ int main() {
                 if (event.is<sf::Event::Closed>()) {
                     LOG_INFO("Window close event received from SFML pollEvent");
                     try {
-                        // Close the window properly
+                        // Set exit flag and close window
+                        shouldExit = true;
                         window.close();
                         LOG_INFO("Breaking from event loop due to close event");
                         break;
                     } catch (const std::exception& e) {
                         LOG_ERROR("Exception handling close event: " + std::string(e.what()));
+                        shouldExit = true;
                     } catch (...) {
                         LOG_ERROR("Unknown exception handling close event");
+                        shouldExit = true;
                     }
                 }
                 else if (const auto* keyPressed = event.getIf<sf::Event::KeyPressed>()) {
@@ -1169,6 +1174,7 @@ int main() {
                     // All other keys are handled by the global keyboard hook
                 if (keyPressed->code == sf::Keyboard::Key::Escape) {
                         LOG_INFO("Escape key pressed - closing window");
+                    shouldExit = true;
                     window.close();
                 }
             }
@@ -1233,6 +1239,16 @@ int main() {
                                         } else if (type == "getSelectedBonkPack") {
                                             LOG_INFO("Sending selected bonk pack");
                                             sendSelectedBonkPack(*settingsWebView, currentBonkPack);
+                                        } else if (type == "getWrappedStats") {
+                                            LOG_INFO("Sending wrapped stats");
+                                            // Update and save stats first to ensure file has latest data
+                                            BongoStats::getInstance().updateTotalMinutes();
+                                            BongoStats::getInstance().saveStats();
+                                            // Then reload directly from file (no merge, use file only)
+                                            BongoStats::getInstance().loadStats(false);
+                                            std::string wrappedStats = BongoStats::getInstance().getWrappedStatsJSON();
+                                            LOG_INFO("Wrapped stats JSON: " + wrappedStats);
+                                            sendJSONToWebView(*settingsWebView, "wrappedStats", wrappedStats);
                                         } else if (type == "selectCatPack") {
                                             std::string packName = parsed["name"];
                                             CatPackConfig newCatPack = CatPackManager::findCatPackByName(availableCatPacks, packName);
@@ -1543,6 +1559,7 @@ int main() {
                                         } else if (type == "shutdown") {
                                             // Shutdown the entire program
                                             LOG_INFO("Shutdown requested from UI");
+                                            shouldExit = true;
                                             window.close();
                                         } else if (type == "hideWindow") {
                                             // Hide the window instead of closing it
@@ -1684,6 +1701,7 @@ int main() {
                 else if (mousePressed->button == sf::Mouse::Button::Right) {
                         // Right-click on window itself - close window
                         LOG_INFO("Right-click detected on window - closing window");
+                    shouldExit = true;
                     window.close();
                 }
             }
@@ -1750,11 +1768,13 @@ int main() {
                 if (msg.message == WM_SYSCOMMAND && msg.wParam == SC_CLOSE) {
                     // Close requested from system menu (taskbar)
                     LOG_INFO("Close requested from taskbar/system menu");
+                    shouldExit = true;
                     window.close();
                     break;
                 } else if (msg.message == WM_CLOSE) {
                     // Close message received
                     LOG_INFO("WM_CLOSE message received");
+                    shouldExit = true;
                     window.close();
                     break;
                 } else {
@@ -1838,6 +1858,8 @@ int main() {
                 // Save counter and stats periodically (every 100 iterations to avoid too frequent file writes)
                 if (loopIteration % 100 == 0) {
                     saveCounter(totalCount);
+                    // Update minutes before saving
+                    BongoStats::getInstance().updateTotalMinutes();
                     BongoStats::getInstance().saveStats();
                 }
             }
@@ -1893,8 +1915,15 @@ int main() {
         
         // Settings webview window is rendered by webview itself, no need to draw here
         
-        // Log every 1000 iterations for debugging
+        // Periodically save stats and update minutes (every ~16 seconds at 60fps = 1000 iterations)
         if (loopIteration % 1000 == 0) {
+            try {
+                // Update minutes before saving to ensure accurate tracking
+                BongoStats::getInstance().updateTotalMinutes();
+                BongoStats::getInstance().saveStats();
+            } catch (...) {
+                // Ignore errors during periodic save
+            }
         }
     }
     
@@ -1902,7 +1931,7 @@ int main() {
     
     LOG_INFO("Application shutting down - Total count: " + std::to_string(totalCount));
     
-    // Shutdown hooks BEFORE destroying window
+    // Shutdown hooks IMMEDIATELY to prevent process from staying alive
     try {
         LOG_INFO("Shutting down keyboard hook");
     keyboardHook.shutdown();
@@ -1936,9 +1965,10 @@ int main() {
     
     // Save counter one final time before exit
     try {
-            saveCounter(totalCount);
-            LOG_INFO("Counter saved on exit: " + std::to_string(totalCount));
-            BongoStats::getInstance().saveStats();
+        saveCounter(totalCount);
+        LOG_INFO("Counter saved on exit: " + std::to_string(totalCount));
+        BongoStats::getInstance().updateTotalMinutes(); // Update minutes before saving
+        BongoStats::getInstance().saveStats();
     } catch (...) {
         LOG_ERROR("Failed to save counter on exit");
     }
@@ -1950,8 +1980,8 @@ int main() {
             window.close();
             LOG_INFO("Window closed");
         }
-        // Give SFML time to clean up
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Give SFML time to clean up (reduced from 100ms to 50ms)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         LOG_INFO("Window cleanup complete");
     } catch (const std::exception& e) {
         LOG_ERROR("Exception destroying window: " + std::string(e.what()));
@@ -1967,6 +1997,14 @@ int main() {
     } catch (...) {
         // Ignore if logger is already destroyed
     }
+    
+    // Force exit to ensure process terminates completely
+    #ifdef _WIN32
+    // On Windows, explicitly terminate the process to ensure cleanup
+    ExitProcess(0);
+    #else
+    std::exit(0);
+    #endif
     
     return 0;
 }
